@@ -39,7 +39,7 @@
 #   nohup scripts/reap_pods.sh --watch --until-empty > /tmp/reap.log 2>&1 &
 #
 # Env: REAP_POLL (60s), REAP_DEADLINE (32400s), REAP_TAIL_BYTES (8192), REAP_KEEP_FAILED,
-#      REAP_NAME_PREFIX (researchgate-).
+#      REAP_NAME_PREFIX (researchgateeod-).
 # Every deletion is appended to reaped-pods.log next to launched-pods.log.
 . "$(dirname "$0")/_common.sh"
 : "${RUNPOD_API_KEY:?account rpa_ key, set in .env}"
@@ -47,7 +47,7 @@
 POLL="${REAP_POLL:-60}"
 DEADLINE="${REAP_DEADLINE:-32400}"        # 9h: the pod watchdog is 7h, plus slack
 TAIL_BYTES="${REAP_TAIL_BYTES:-8192}"
-PREFIX="${REAP_NAME_PREFIX:-researchgate-}"
+PREFIX="${REAP_NAME_PREFIX:-researchgateeod-}"
 WATCH=""; UNTIL_EMPTY=""; DRY=""; FORCE=""; ONLY=""
 KEEP_FAILED="${REAP_KEEP_FAILED:-}"
 

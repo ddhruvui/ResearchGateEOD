@@ -3,7 +3,7 @@
 #
 # ONE volume since 2026-09-16: crimtr8kbf holds the market data under data/
 # (READ-ONLY, shared with the acquisition pipeline) and everything this project
-# writes under RESULTS_PREFIX (results/ResearchGate). Two names come out of here:
+# writes under RESULTS_PREFIX (results/ResearchGateEOD). Two names come out of here:
 #   SRC_BUCKET  the volume root — only ever `aws s3 ls` or `cp` FROM it
 #   DST_ROOT    s3://<volume>/<RESULTS_PREFIX> — the ONLY write / rm target
 # Never add a write path against SRC_BUCKET, and never `aws s3 rm` anything that
@@ -28,7 +28,7 @@ eval "$_saved"; unset _saved
 SOURCE_VOLUME_ID="${SOURCE_VOLUME_ID:-crimtr8kbf}"
 RESULTS_VOLUME_ID="${RESULTS_VOLUME_ID:-$SOURCE_VOLUME_ID}"
 # `-` not `:-`: unset -> default, but an EMPTY value is an error (matches src/config.py).
-RESULTS_PREFIX="${RESULTS_PREFIX-results/ResearchGate}"
+RESULTS_PREFIX="${RESULTS_PREFIX-results/ResearchGateEOD}"
 RESULTS_PREFIX="${RESULTS_PREFIX#/}"; RESULTS_PREFIX="${RESULTS_PREFIX%/}"
 S3_REGION="${RUNPOD_S3_REGION:-eu-ro-1}"
 S3_ENDPOINT="${RUNPOD_S3_ENDPOINT:-https://s3api-eu-ro-1.runpod.io}"

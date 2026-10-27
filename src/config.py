@@ -19,7 +19,7 @@ SOURCE_VOLUME_ID = "crimtr8kbf"
 # whole write boundary: it must sit under results/ so it can never overlap data/
 # or any other root prefix the acquisition pipeline owns (_pod_logs/, code/, m1/…).
 RESULTS_PREFIX_ROOT = "results/"
-DEFAULT_RESULTS_PREFIX = "results/ResearchGate"
+DEFAULT_RESULTS_PREFIX = "results/ResearchGateEOD"
 
 
 def results_prefix(raw: str | None) -> str:

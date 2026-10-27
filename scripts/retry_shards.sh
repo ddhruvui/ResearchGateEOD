@@ -22,7 +22,7 @@ for i in $(seq 1 "$TRIES"); do
     | sed "s|.*/shards/[0-9]*/||;s|/latest.*||" | sed "s/^0*//" | tr "\n" " ")
   for s in $WANT; do
     case " $done_list " in *" ${s} "*) continue ;; esac
-    printf '%s' "$running" | grep -q "researchgate-pso-lssvm-s${s}\"" || still="$still $s"
+    printf '%s' "$running" | grep -q "researchgateeod-pso-lssvm-s${s}\"" || still="$still $s"
   done
   if [ -z "$still" ]; then echo "all requested shards are running"; exit 0; fi
   echo "attempt $i: still need shards$still"

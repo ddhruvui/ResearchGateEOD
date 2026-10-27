@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Pod entrypoint. The volume crimtr8kbf is mounted at /workspace. Its data/ tree
 # is READ-ONLY market data shared with the acquisition pipeline. This script
-# writes ONLY under /workspace/$RESULTS_PREFIX (results/ResearchGate): its log,
+# writes ONLY under /workspace/$RESULTS_PREFIX (results/ResearchGateEOD): its log,
 # nothing else (the code bundle unpacks to container disk). The python code writes through
 # src/storage.py::ResultStore, which is confined to the same prefix.
 set +e

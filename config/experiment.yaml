@@ -69,6 +69,6 @@ pso:
   seed: 7
 
 output:
-  prefix: runs                  # relative to RESULTS_PREFIX -> results/ResearchGate/runs/<run_id>/…
+  prefix: runs                  # relative to RESULTS_PREFIX -> results/ResearchGateEOD/runs/<run_id>/…
   write_predictions: true
   write_metrics: true

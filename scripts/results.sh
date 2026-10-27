@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pull the latest run from under results/ResearchGate/ into ./results/ and print the summary.
+# Pull the latest run from under results/ResearchGateEOD/ into ./results/ and print the summary.
 #   scripts/results.sh            # latest
 #   scripts/results.sh 20260824T… # a specific stamp
 . "$(dirname "$0")/_common.sh"

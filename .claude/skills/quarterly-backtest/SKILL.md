@@ -25,7 +25,7 @@ result is attributable.
 ## 1. Check the config matches intent
 
 ```bash
-cd /Users/dhruvdesai/Development/ResearchGate
+cd /Users/dhruvdesai/Development/Stocks/ResearchGateEOD
 python3 -c "
 import yaml; c=yaml.safe_load(open('config/experiment.yaml'))
 print('fitness  :', c['pso']['fitness'])       # rank_ic (mse reproduces the paper)
@@ -41,7 +41,7 @@ no future information reaches a prediction.
 
 ## 2. Clear the previous results
 
-Only ever `$DST_ROOT` (`s3://crimtr8kbf/results/ResearchGate`), and only its
+Only ever `$DST_ROOT` (`s3://crimtr8kbf/results/ResearchGateEOD`), and only its
 `runs/` prefix. **`data/` on the same volume is read-only market data shared
 with the acquisition pipeline and must never be written to or deleted from.**
 `scripts/_common.sh` exposes no root-level write target, so keep every `rm`
@@ -63,12 +63,12 @@ is no gap in what the UI shows.
 ## 2b. Stage/refresh ext tickers
 
 The acquisition pipeline only publishes its own universe to the source volume.
-Tickers outside it are staged under `results/ResearchGate/` with identical relative keys and
+Tickers outside it are staged under `results/ResearchGateEOD/` with identical relative keys and
 read through `LayeredSource`. Refresh them so the replay ends on the same bar
 for every ticker:
 
 ```bash
-cd /Users/dhruvdesai/Development/ResearchGate
+cd /Users/dhruvdesai/Development/Stocks/ResearchGateEOD
 bash -c 'set -a; . ./.env; set +a; python3 -m src.fetch_ext'
 ```
 
@@ -83,7 +83,7 @@ outstanding.
 ## 3. Launch 20 shards
 
 ```bash
-cd /Users/dhruvdesai/Development/ResearchGate
+cd /Users/dhruvdesai/Development/Stocks/ResearchGateEOD
 RUN_MODE=both SHARDS=20 WATCHDOG_SEC=43200 bash scripts/launch.sh 2>&1 | grep -E "launched|placed at|no capacity at 2|all pods|some pods" | tail -25
 ```
 
@@ -101,7 +101,7 @@ EU-RO-1 capacity is often tight (on 2026-09-17 all 20 placed first try). If some
 did not place, note which and start the retry loop:
 
 ```bash
-cd /Users/dhruvdesai/Development/ResearchGate
+cd /Users/dhruvdesai/Development/Stocks/ResearchGateEOD
 SHARDS=20 SHARD_LIST="4 5 6 7" TRIES=80 INTERVAL=180 WATCHDOG_SEC=43200 \
   nohup bash scripts/retry_shards.sh > /tmp/retry.log 2>&1 &
 ```
@@ -120,7 +120,7 @@ the volume and deletes it once the `work=` line is there — after the run, the
 strategy pass and the publish, never mid-publish.
 
 ```bash
-cd /Users/dhruvdesai/Development/ResearchGate && nohup scripts/reap_pods.sh --watch --until-empty > /tmp/reap.log 2>&1 &
+cd /Users/dhruvdesai/Development/Stocks/ResearchGateEOD && nohup scripts/reap_pods.sh --watch --until-empty > /tmp/reap.log 2>&1 &
 ```
 
 It also covers the restart loop that used to cost whole rebuilds: a pod that
@@ -136,7 +136,7 @@ finished pods billed.
 
 ```bash
 bash -c '
-cd /Users/dhruvdesai/Development/ResearchGate
+cd /Users/dhruvdesai/Development/Stocks/ResearchGateEOD
 set +e; . scripts/_common.sh; set +e +u +o pipefail
 AWSX="$S3FLAGS --cli-connect-timeout 15 --cli-read-timeout 60"
 SH="$DST_ROOT/runs/pso_lssvm_v1/shards/20"
@@ -145,7 +145,7 @@ while true; do
   done_list=" $(aws s3 ls $AWSX "$SH/" --recursive 2>/dev/null | grep "latest/metrics.json" | sed "s|.*/shards/20/||;s|/latest.*||;s/^0//" | tr "\n" " ") "
   pods=$(curl -sS --max-time 25 https://rest.runpod.io/v1/pods -H "Authorization: Bearer $RUNPOD_API_KEY" 2>/dev/null \
     | python3 -c "import json,sys
-try: print(\"\n\".join(x[\"name\"].rsplit(\"-s\",1)[1]+\" \"+x[\"id\"] for x in json.load(sys.stdin) if (x.get(\"name\") or \"\").startswith(\"researchgate-pso-lssvm-s\")))
+try: print(\"\n\".join(x[\"name\"].rsplit(\"-s\",1)[1]+\" \"+x[\"id\"] for x in json.load(sys.stdin) if (x.get(\"name\") or \"\").startswith(\"researchgateeod-pso-lssvm-s\")))
 except Exception: print(\"ERR\")")
   [ "$pods" = "ERR" ] && { sleep 60; continue; }
   logs=$(aws s3 ls $AWSX "$DST_ROOT/_pod_logs/" 2>/dev/null)
@@ -184,7 +184,7 @@ pod placed at. One straggler holding up the end is normal.
 Only when all 20 are in:
 
 ```bash
-cd /Users/dhruvdesai/Development/ResearchGate
+cd /Users/dhruvdesai/Development/Stocks/ResearchGateEOD
 set -a && . ./.env && set +a
 python3 -m src.merge --shards 20 --local-out results/latest
 ```
@@ -198,7 +198,7 @@ are not averages of per-shard averages.
 
 It then **publishes to MongoDB itself** (`src.merge` → `publish(full=True)`):
 every row of the run is replaced, because a rebuild changes old rows too, not
-just appends. Expect `[publish] ResearchGate: predictions replaced +147,469 …` (105 tickers through 2026-09-16)
+just appends. Expect `[publish] ResearchGateEOD: predictions replaced +147,469 …` (105 tickers through 2026-09-16)
 after `written to s3://…/latest/`; about three minutes. The `.env` sourced above
 is what supplies `MONGO_URI`.
 

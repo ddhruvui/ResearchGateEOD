@@ -16,7 +16,7 @@ Or invoke it directly:
 
 **What happens:** grades yesterday's stored prediction against the bar that just
 landed, adds that bar to each stock's training window, records a fresh prediction
-for the next session, pushes everything under `results/ResearchGate/` on the
+for the next session, pushes everything under `results/ResearchGateEOD/` on the
 volume, and publishes it to
 MongoDB so the deployed dashboard shows it a couple of minutes later. Nothing is
 downloaded to this machine.
@@ -33,7 +33,7 @@ that: `scripts/reap_pods.sh` deletes finished pods from the laptop, and the skil
 runs it.
 
 **Needs a merged rebuild.** The daily grades the forecast the last run stored. If
-`results/ResearchGate/runs/` is empty (e.g. after a results wipe) there is nothing
+`results/ResearchGateEOD/runs/` is empty (e.g. after a results wipe) there is nothing
 to grade — run the full rebuild first.
 
 **Safe to repeat.** Running it twice does nothing the second time — a recorded
@@ -60,7 +60,7 @@ Or:
 /quarterly-backtest
 ```
 
-**What happens:** clears `results/ResearchGate/runs/` on the volume, checks for
+**What happens:** clears `results/ResearchGateEOD/runs/` on the volume, checks for
 ext tickers to stage, replays all 151 tickers
 from 2021-01-04 across 20 parallel pods with PSO re-tuning at every quarter
 boundary, then merges and rescores
@@ -119,13 +119,13 @@ not 105. It will read +10pp one day and −10pp the next. It needs months.
 
 The UI is deployed. **Render** serves the React site, **Vercel** serves the API,
 and both read what the pipeline published to **MongoDB Atlas** (database
-`ResearchGate`). Nothing has to run on this laptop.
+`ResearchGateEOD`). Nothing has to run on this laptop.
 
 | Piece | Repo | Runs on |
 |---|---|---|
 | UI | [ddhruvui/ResearchGateFE](https://github.com/ddhruvui/ResearchGateFE) | Render static site |
 | API | [ddhruvui/ResearchGateBE](https://github.com/ddhruvui/ResearchGateBE) | Vercel serverless function |
-| Data | this repo, `src/publish_mongo.py` | MongoDB Atlas, db `ResearchGate` |
+| Data | this repo, `src/publish_mongo.py` | MongoDB Atlas, db `ResearchGateEOD` |
 
 Deployed URLs (the `dashboard` skill reads them from here):
 
@@ -204,7 +204,7 @@ FAILED`, then run the daily or republish by hand.
 
 - **`data/` on `crimtr8kbf` (pinned in `src/config.py`) is read-only.** Market
   data, shared with the acquisition pipeline. Never written, never deleted from.
-  Everything this project writes goes under `results/ResearchGate/` on the same
+  Everything this project writes goes under `results/ResearchGateEOD/` on the same
   volume (`RESULTS_PREFIX`; `$DST_ROOT` in the scripts) — including any ext
   tickers `python3 -m src.fetch_ext` stages (none are needed for the current
   universe; `--dry-run` lists them).

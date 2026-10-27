@@ -23,7 +23,7 @@ instead of a human guessing them.
 | Volume | Prefix | Role | Access |
 |---|---|---|---|
 | `crimtr8kbf` | `data/` | market data (EOD bars, splits, calendar), published by the acquisition pipeline | **READ-ONLY** |
-| `crimtr8kbf` | `results/ResearchGate/` | all results, pod logs, code bundle (`RESULTS_PREFIX`) | read/write |
+| `crimtr8kbf` | `results/ResearchGateEOD/` | all results, pod logs, code bundle (`RESULTS_PREFIX`) | read/write |
 
 Since 2026-09-16 there is one volume. `data/` — and every other root prefix the
 acquisition pipeline owns — is never written to. Enforced four independent ways:
@@ -37,17 +37,17 @@ acquisition pipeline owns — is never written to. Enforced four independent way
    S3 client is private — the tests grep `src/` to prove nothing else touches
    it. `Env.load()` refuses a `RESULTS_PREFIX` outside `results/` and a
    repointed `SOURCE_VOLUME_ID`.
-3. **The pod writes only under `/workspace/results/ResearchGate/`.**
+3. **The pod writes only under `/workspace/results/ResearchGateEOD/`.**
    `scripts/bootstrap.sh` validates `RESULTS_PREFIX` before touching the mount
    and keeps its log and the unpacked bundle under that path; the python code
    goes through `ResultStore`.
 4. **The shell helpers have no root-level write target.** `scripts/_common.sh`
    exposes `SRC_BUCKET` (the read-only root, `ls`/`cp` from only) and
-   `DST_ROOT` (`s3://crimtr8kbf/results/ResearchGate`); every `aws s3 rm` in
+   `DST_ROOT` (`s3://crimtr8kbf/results/ResearchGateEOD`); every `aws s3 rm` in
    the skills is spelled against `$DST_ROOT/...`.
 
 Anything extra you want alongside the source data — derived columns, caches,
-diagnostics — is written under `results/ResearchGate/`.
+diagnostics — is written under `results/ResearchGateEOD/`.
 
 ---
 
@@ -205,7 +205,7 @@ found on the last full backtest — seconds per ticker instead of minutes.
 ### Dashboard
 
 The results are viewed on a deployed UI, not on this machine. The pipeline
-publishes `runs/<run_id>/latest/` to MongoDB Atlas (database `ResearchGate`),
+publishes `runs/<run_id>/latest/` to MongoDB Atlas (database `ResearchGateEOD`),
 and two small repos serve it:
 
 | Piece | Repo | Runs on |
@@ -299,7 +299,7 @@ src/run.py               entrypoint
 src/daily.py             grade -> learn -> guess, the everyday path
 src/strategy.py          the $10k-per-stock stop-loss paper trade (reads only)
 src/publish_mongo.py     latest/ -> MongoDB Atlas, for the deployed dashboard
-scripts/launch.sh        bundle -> results/ResearchGate/code -> CPU pod -> self-terminate
+scripts/launch.sh        bundle -> results/ResearchGateEOD/code -> CPU pod -> self-terminate
 scripts/reap_pods.sh     host-side reaper: deletes pods whose run has finished
 tests/                   leakage proof, model sanity, storage guards
 ```

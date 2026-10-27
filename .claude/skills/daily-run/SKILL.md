@@ -8,7 +8,7 @@ description: Run and monitor the everyday PSO+LS-SVM pipeline — grade yesterda
 One pass: **grade → learn → guess**. Never replays history. ~1 min of compute for
 151 tickers; the slow part is placing a pod.
 
-Working directory is the repo root (`/Users/dhruvdesai/Development/ResearchGate`).
+Working directory is the repo root (`/Users/dhruvdesai/Development/Stocks/ResearchGateEOD`).
 
 ## 0. Ext tickers — check staging for the current universe
 
@@ -28,7 +28,7 @@ Bars are published by the DataAcquistion repo to `data/ohlcv/<T>.json` on
 `crimtr8kbf`; read them through this repo's `_common.sh` (read-only `$SRC_BUCKET`):
 
 ```bash
-cd /Users/dhruvdesai/Development/ResearchGate && bash -c 'set +e; . scripts/_common.sh; set +e
+cd /Users/dhruvdesai/Development/Stocks/ResearchGateEOD && bash -c 'set +e; . scripts/_common.sh; set +e
 for t in AAPL MSFT AVGO; do aws s3 cp $S3FLAGS "$SRC_BUCKET/data/ohlcv/$t.json" /tmp/chk_$t.json --quiet; done
 python3 -c "
 import json
@@ -63,7 +63,7 @@ results wipe), so there is nothing to grade and `src.daily` would exit 1 with
 ## 3. Check nothing is already running
 
 ```bash
-cd /Users/dhruvdesai/Development/ResearchGate && bash -c 'set +e; . scripts/_common.sh; set +e
+cd /Users/dhruvdesai/Development/Stocks/ResearchGateEOD && bash -c 'set +e; . scripts/_common.sh; set +e
 curl -sS --max-time 25 https://rest.runpod.io/v1/pods -H "Authorization: Bearer $RUNPOD_API_KEY" \
  | python3 -c "import json,sys; print([x[\"name\"] for x in json.load(sys.stdin) if \"researchgate\" in (x.get(\"name\") or \"\")] or \"none\")"'
 ```
@@ -79,7 +79,7 @@ silently starting the full walk-forward rebuild.
 ## 4. Launch
 
 ```bash
-cd /Users/dhruvdesai/Development/ResearchGate
+cd /Users/dhruvdesai/Development/Stocks/ResearchGateEOD
 RUN_MODE=daily SHARDS=1 WATCHDOG_SEC=3600 bash scripts/launch.sh 2>&1 | grep -vE "^Completed|upload:" | tail -10
 ```
 
@@ -89,7 +89,7 @@ at `GPU_MAX_PRICE`, default $0.50/hr). The GPU is never used for compute — it 
 bought for the host CPU. If it reports no capacity at all, retry every ~40 s;
 placement usually succeeds within a few attempts.
 
-Note the pod id from `launched researchgate-pso-lssvm -> <id>`.
+Note the pod id from `launched researchgateeod-pso-lssvm -> <id>`.
 
 ## 5. Monitor
 
@@ -98,16 +98,16 @@ which silently breaks every aws call and reports a plausible-looking zero):
 
 ```bash
 bash -c '
-cd /Users/dhruvdesai/Development/ResearchGate
+cd /Users/dhruvdesai/Development/Stocks/ResearchGateEOD
 set +e
 export AWS_ACCESS_KEY_ID=$(grep "^AWS_ACCESS_KEY_ID=" .env | cut -d= -f2-)
 export AWS_SECRET_ACCESS_KEY=$(grep "^AWS_SECRET_ACCESS_KEY=" .env | cut -d= -f2-)
 AWSF="--region eu-ro-1 --endpoint-url https://s3api-eu-ro-1.runpod.io"
 prev=""
 for i in $(seq 1 90); do
-  K=$(aws s3 ls $AWSF s3://crimtr8kbf/results/ResearchGate/_pod_logs/ 2>/dev/null | grep POD_ID | awk "{print \$4}" | tail -1)
+  K=$(aws s3 ls $AWSF s3://crimtr8kbf/results/ResearchGateEOD/_pod_logs/ 2>/dev/null | grep POD_ID | awk "{print \$4}" | tail -1)
   if [ -n "$K" ]; then
-    aws s3 cp $AWSF "s3://crimtr8kbf/results/ResearchGate/_pod_logs/$K" /tmp/dr.log --quiet 2>/dev/null
+    aws s3 cp $AWSF "s3://crimtr8kbf/results/ResearchGateEOD/_pod_logs/$K" /tmp/dr.log --quiet 2>/dev/null
     cur=$(grep -E "resources:|to grade|graded |LIVE-only|next guess|run exit|Killed|Traceback|nothing to do|publishing latest|\[publish\]|mongo publish failed|work=|TERMINATED via" /tmp/dr.log 2>/dev/null)
     if [ "$cur" != "$prev" ]; then
       diff <(printf "%s\n" "$prev") <(printf "%s\n" "$cur") 2>/dev/null | grep "^>" | sed "s/^> //"
@@ -123,7 +123,7 @@ Substitute the real pod id for `POD_ID`. The grep must cover failure signatures
 (`Killed`, `Traceback`), not just the happy path — silence otherwise looks
 identical to a crash. `run exit=0` is not the end: the pod then publishes
 `latest/` to MongoDB for the dashboard (`publishing latest/ to MongoDB` …
-`[publish] ResearchGate: predictions appended +151 …`) and only then
+`[publish] ResearchGateEOD: predictions appended +151 …`) and only then
 tries to self-terminate, which is what the loop waits for.
 
 **Confirm the pod is gone.** The log ends in `TERMINATED via rest: HTTP 204` and
@@ -136,7 +136,7 @@ If the log ends in `!! TERMINATION NOT CONFIRMED` instead, the pod is idling and
 billing, and the reaper clears it — one pass is enough once `work=` is in the log:
 
 ```bash
-cd /Users/dhruvdesai/Development/ResearchGate && scripts/reap_pods.sh
+cd /Users/dhruvdesai/Development/Stocks/ResearchGateEOD && scripts/reap_pods.sh
 ```
 
 It reads each pod's own log off the volume and deletes only pods whose `work=`
@@ -144,13 +144,13 @@ line is there, so it is safe to run at any time, including mid-run. To not have
 to think about it at all, start it in the background right after the launch:
 
 ```bash
-cd /Users/dhruvdesai/Development/ResearchGate && nohup scripts/reap_pods.sh --watch --until-empty > /tmp/reap.log 2>&1 &
+cd /Users/dhruvdesai/Development/Stocks/ResearchGateEOD && nohup scripts/reap_pods.sh --watch --until-empty > /tmp/reap.log 2>&1 &
 ```
 
 Either way, end with no pods left:
 
 ```bash
-cd /Users/dhruvdesai/Development/ResearchGate && bash -c 'set +e; . scripts/_common.sh; set +e
+cd /Users/dhruvdesai/Development/Stocks/ResearchGateEOD && bash -c 'set +e; . scripts/_common.sh; set +e
 curl -sS --max-time 25 https://rest.runpod.io/v1/pods -H "Authorization: Bearer $RUNPOD_API_KEY" \
  | python3 -c "import json,sys; print([x[\"name\"] for x in json.load(sys.stdin)] or \"none\")"'
 ```
@@ -220,7 +220,7 @@ nothing yet.
 | `graded 151 · new guesses 151 · errors 0` | success |
 | `nothing to do` | already processed, or vendor has not published. Correct, not a failure |
 | `run exit=137` | OOM. Should not recur (worker count is cgroup-aware), but report it |
-| `[publish] ResearchGate: predictions appended +151 …` | the dashboard has the run |
+| `[publish] ResearchGateEOD: predictions appended +151 …` | the dashboard has the run |
 | `[publish] FAILED: …` | run succeeded, dashboard stale — republish from the laptop (step 6). `ServerSelectionTimeoutError` from the pod usually means Atlas Network Access does not allow it |
 | no `publishing latest/` line after `run exit=0` | `MONGO_URI` was empty in `.env` at launch — republish from the laptop |
 | `to grade : <151` | stored file was clobbered — re-merge before rerunning; a handful short is also what stale staged ext tickers look like, if any are ever staged again (step 0) |

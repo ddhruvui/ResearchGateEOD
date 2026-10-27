@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Bundle this project, push it under results/ResearchGate/ on the volume, and run it on a RunPod CPU pod.
+# Bundle this project, push it under results/ResearchGateEOD/ on the volume, and run it on a RunPod CPU pod.
 #
 #   RUN_MODE=daily scripts/launch.sh            # the everyday grade -> learn -> guess
 #   RUN_MODE=both SHARDS=20 scripts/launch.sh   # full walk-forward rebuild
@@ -17,7 +17,7 @@ IMAGE="${RUNPOD_IMAGE:-python:3.11-slim}"
 # than failing outright; a smaller pod runs the same job, just slower.
 VCPU_LADDER="${RUNPOD_VCPU_LADDER:-${RUNPOD_VCPU:-16} 8 4 2}"
 FLAVORS="${RUNPOD_CPU_FLAVORS:-[\"cpu3c\",\"cpu3g\",\"cpu3m\",\"cpu5c\",\"cpu5g\",\"cpu5m\"]}"
-NAME_BASE="researchgate-pso-lssvm"
+NAME_BASE="researchgateeod-pso-lssvm"
 SHARDS="${SHARDS:-1}"
 DRY_RUN="${DRY_RUN:-}"
 
@@ -92,7 +92,7 @@ PAYLOAD=$(cat <<JSON
     "WATCHDOG_SEC": "${WATCHDOG_SEC:-25200}",
     "MONGO_URI": "${MONGO_URI:-}",
     "DB_PASSWORD": "${DB_PASSWORD:-}",
-    "MONGO_DB": "${MONGO_DB:-ResearchGate}"
+    "MONGO_DB": "${MONGO_DB:-ResearchGateEOD}"
   }
 }
 JSON
@@ -163,7 +163,7 @@ launch_gpu() {
     "WATCHDOG_SEC": "${WATCHDOG_SEC:-25200}",
     "MONGO_URI": "${MONGO_URI:-}",
     "DB_PASSWORD": "${DB_PASSWORD:-}",
-    "MONGO_DB": "${MONGO_DB:-ResearchGate}"
+    "MONGO_DB": "${MONGO_DB:-ResearchGateEOD}"
   }
 }
 JSON

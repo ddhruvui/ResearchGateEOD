@@ -1,7 +1,7 @@
 """S3 access to the RunPod network volume.
 
 HARD RULE: data/ on crimtr8kbf is READ-ONLY. Since 2026-09-16 the same volume
-also carries this project's output, confined to ONE prefix (results/ResearchGate,
+also carries this project's output, confined to ONE prefix (results/ResearchGateEOD,
 `RESULTS_PREFIX`). The rule is enforced four ways —
 
   1. `SourceStore` / `LayeredSource` expose ONLY get/list. No put, copy or delete

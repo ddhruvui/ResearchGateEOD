@@ -8,7 +8,7 @@
 Environment (see .env.example):
     MONGO_URI     mongodb+srv://user:<db_password>@host/...   (placeholder allowed)
     DB_PASSWORD   substituted for <db_password>, URL-encoded
-    MONGO_DB      database name, default ResearchGate
+    MONGO_DB      database name, default ResearchGateEOD
 
 Collections written, in database MONGO_DB:
     runs          _id = run_id. metrics.json verbatim, the summary / ticker / year
@@ -459,7 +459,7 @@ def publish(*, full: bool = False, from_dir: str | None = None, config: str | No
         return {"dry_run": True, "rows": len(preds)}
 
     client = connect(uri)
-    db = client[os.environ.get("MONGO_DB", "ResearchGate")]
+    db = client[os.environ.get("MONGO_DB", "ResearchGateEOD")]
     out = write_all(db, b, full, preds)
     print(f"[publish] {db.name}: predictions {out['mode']} +{out['predictions']:,} "
           f"(now {out['in_mongo']:,}), next_session {out['next_session']}, "

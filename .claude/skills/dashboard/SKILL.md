@@ -11,7 +11,7 @@ Three pieces, none of them on this laptop:
 |---|---|---|
 | UI (React/Vite) | github.com/ddhruvui/ResearchGateFE | Render static site |
 | API (Express) | github.com/ddhruvui/ResearchGateBE | Vercel serverless function |
-| Data | this repo, `src/publish_mongo.py` | MongoDB Atlas, database `ResearchGate` |
+| Data | this repo, `src/publish_mongo.py` | MongoDB Atlas, database `ResearchGateEOD` |
 
 The pipeline publishes `runs/pso_lssvm_v1/latest/` to Mongo — `scripts/bootstrap.sh`
 after a daily run, `src.merge` after a rebuild. The API reads Mongo with a 60 s
@@ -23,7 +23,7 @@ Deployed URLs (also in RUNBOOK.md → Dashboard):
 - UI: `https://researchgatefe.onrender.com` — open this in the Browser pane to see it rendered
 - API: `https://research-gate-be.vercel.app`
 
-Working directory is the repo root (`/Users/dhruvdesai/Development/ResearchGate`).
+Working directory is the repo root (`/Users/dhruvdesai/Development/Stocks/ResearchGateEOD`).
 
 ## 1. Is it showing the current run? — check before doing anything
 
@@ -33,9 +33,9 @@ curl -s --max-time 20 "$API/api/health"
 ```
 
 ```json
-{"ok":true,"runId":"pso_lssvm_v1","db":"ResearchGate","rows":220929,
+{"ok":true,"runId":"pso_lssvm_v1","db":"ResearchGateEOD","rows":220929,
  "publishedAt":"2026-09-04T17:27:05+00:00","forSession":"2026-09-04",
- "origin":"s3://crimtr8kbf/results/ResearchGate/runs/pso_lssvm_v1/latest"}
+ "origin":"s3://crimtr8kbf/results/ResearchGateEOD/runs/pso_lssvm_v1/latest"}
 ```
 
 Compare `forSession` with what the volume holds:
@@ -80,8 +80,8 @@ lines. No `publishing` line at all means `MONGO_URI` was empty when launched.
 The two repos are siblings of this one:
 
 ```bash
-cd /Users/dhruvdesai/Development/ResearchGateBE && npm install && npm run dev   # 8891, reads Atlas
-cd /Users/dhruvdesai/Development/ResearchGateFE && npm install && npm run dev   # 5273, proxies /api
+cd /Users/dhruvdesai/Development/Stocks/ResearchGateBE && npm install && npm run dev   # 8891, reads Atlas
+cd /Users/dhruvdesai/Development/Stocks/ResearchGateFE && npm install && npm run dev   # 5273, proxies /api
 ```
 
 The backend needs `.env` with the same three Mongo keys (`.env.example` lists
@@ -94,7 +94,7 @@ same way.)
 
 **"Last published N days ago"** — `publishedAt` is more than five days old. The
 daily run did not go through, or its publish step failed. Look for `[publish]
-FAILED` in the newest `results/ResearchGate/_pod_logs/` entry, fix per the table, then §2.
+FAILED` in the newest `results/ResearchGateEOD/_pod_logs/` entry, fix per the table, then §2.
 
 **"The API did not answer"** — the UI could not reach the API at all.
 

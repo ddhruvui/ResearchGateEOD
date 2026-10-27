@@ -9,7 +9,7 @@ import pytest
 from src.config import ROOT, SOURCE_VOLUME_ID, Env, results_prefix
 from src.storage import LayeredSource, ResultStore, SourceStore
 
-PREFIX = "results/ResearchGate"
+PREFIX = "results/ResearchGateEOD"
 
 
 def test_source_store_exposes_no_write_methods():
@@ -139,7 +139,7 @@ def test_results_prefix_must_sit_under_results(bad):
 
 
 def test_results_prefix_default_and_normalisation():
-    assert results_prefix(None) == "results/ResearchGate"
+    assert results_prefix(None) == "results/ResearchGateEOD"
     assert results_prefix("/results/Other/") == "results/Other"
 
 
@@ -159,7 +159,7 @@ def test_env_results_default_to_the_source_volume_under_the_default_prefix(monke
     monkeypatch.delenv("RESULTS_VOLUME_ID", raising=False)
     monkeypatch.delenv("RESULTS_PREFIX", raising=False)
     env = Env.load()
-    assert env.results_volume == SOURCE_VOLUME_ID and env.results_prefix == "results/ResearchGate"
+    assert env.results_volume == SOURCE_VOLUME_ID and env.results_prefix == "results/ResearchGateEOD"
 
 
 @pytest.mark.parametrize("bad", ["data", "", "results", "/", "results/../data"])

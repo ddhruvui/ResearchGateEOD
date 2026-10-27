@@ -25,7 +25,7 @@ t() {  # $1 desc  $2 want  $3 name  $4 id  $5 keys(newline-sep)  [$6 KEEP_FAILED
   fi
 }
 
-POD=researchgate-pso-lssvm
+POD=researchgateeod-pso-lssvm
 K1=20260924T010000Z-aaa.log
 K2=20260924T014500Z-aaa.log
 
