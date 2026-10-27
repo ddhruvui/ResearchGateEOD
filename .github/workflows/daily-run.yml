@@ -4,7 +4,7 @@
 # run from the Mac — then it stays to reap the pod (scripts/reap_pods.sh), which is what the laptop
 # used to do.
 #
-# SETUP: one repository secret, RESEARCHGATE_ENV = the full contents of .env
+# SETUP: one repository secret, RESEARCHGATEEOD_ENV = the full contents of .env
 #   (Settings -> Secrets and variables -> Actions -> New repository secret).
 #
 # Cron is UTC and has no DST, so both offsets are scheduled and the `gate` step lets through only
@@ -56,10 +56,10 @@ jobs:
       - name: write .env
         if: steps.gate.outputs.run == 'true'
         env:
-          RESEARCHGATE_ENV: ${{ secrets.RESEARCHGATE_ENV }}
+          RESEARCHGATEEOD_ENV: ${{ secrets.RESEARCHGATEEOD_ENV }}
         run: |
-          [ -n "$RESEARCHGATE_ENV" ] || { echo "::error::secret RESEARCHGATE_ENV is not set"; exit 1; }
-          printf '%s\n' "$RESEARCHGATE_ENV" > .env
+          [ -n "$RESEARCHGATEEOD_ENV" ] || { echo "::error::secret RESEARCHGATEEOD_ENV is not set"; exit 1; }
+          printf '%s\n' "$RESEARCHGATEEOD_ENV" > .env
           chmod 600 .env
           # GitHub masks a secret only as a whole string. Register every individual value so no
           # key can leak line by line.

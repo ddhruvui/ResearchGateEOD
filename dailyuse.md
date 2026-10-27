@@ -2,7 +2,7 @@
 
 **Automatic:** GitHub Actions runs this every day at 04:30 New York time
 ([.github/workflows/daily-run.yml](.github/workflows/daily-run.yml)): it checks the new bar is in,
-launches the pod, and reaps it. Needs the repo secret `RESEARCHGATE_ENV` = the full contents of `.env`.
+launches the pod, and reaps it. Needs the repo secret `RESEARCHGATEEOD_ENV` = the full contents of `.env`.
 Run it by hand from the Actions tab (**daily-run → Run workflow**), or from here:
 
 ```bash
