@@ -49,4 +49,18 @@ S3FLAGS="--region $S3_REGION --endpoint-url $S3_ENDPOINT"
 SRC_BUCKET="s3://$SOURCE_VOLUME_ID"                     # read-only root
 DST_ROOT="s3://$RESULTS_VOLUME_ID/$RESULTS_PREFIX"       # the only write target
 
+# Seed: launch.sh wipes DST_ROOT and copies ResearchGate's results into it before every
+# launch (MIRROR_FROM_RG=0 to skip). MIRROR_SRC is READ-ONLY like SRC_BUCKET — only
+# ever a copy source, never a cp/rm target.
+MIRROR_FROM_RG="${MIRROR_FROM_RG:-1}"
+MIRROR_SRC_PREFIX="${MIRROR_SRC_PREFIX:-results/ResearchGate}"
+MIRROR_SRC_PREFIX="${MIRROR_SRC_PREFIX#/}"; MIRROR_SRC_PREFIX="${MIRROR_SRC_PREFIX%/}"
+case "$MIRROR_SRC_PREFIX" in
+  results/?*) ;;
+  *) echo "FATAL: MIRROR_SRC_PREFIX must be results/<name> (got '$MIRROR_SRC_PREFIX')" >&2; exit 2 ;;
+esac
+[ "$MIRROR_SRC_PREFIX" != "$RESULTS_PREFIX" ] \
+  || { echo "FATAL: MIRROR_SRC_PREFIX equals RESULTS_PREFIX — would wipe its own source" >&2; exit 2; }
+MIRROR_SRC="$SRC_BUCKET/$MIRROR_SRC_PREFIX"              # read-only copy source
+
 command -v aws >/dev/null || { echo "aws CLI not found — install awscli" >&2; exit 1; }

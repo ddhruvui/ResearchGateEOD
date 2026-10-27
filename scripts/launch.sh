@@ -51,9 +51,70 @@ if [ -n "$DRY_RUN" ]; then
   # loop would build instead.
   if [ "$SHARDS" -le 1 ]; then DRY_NAMES="$NAME_BASE"
   else DRY_NAMES="${NAME_BASE}-s0 .. ${NAME_BASE}-s$((SHARDS-1))"; fi
+  [ "$MIRROR_FROM_RG" = "1" ] && [ -z "${SHARD_LIST:-}" ] \
+    && echo "DRY_RUN: would wipe $DST_ROOT/ and copy $MIRROR_SRC/ into it (minus code/ app/ _pod_logs/), unless a ${NAME_BASE} pod is up"
   echo "DRY_RUN: would upload bundle -> $DST_ROOT/code/bundle.tar.gz"
   echo "DRY_RUN: would create pod(s) $DRY_NAMES in $DC (mode=$RUN_MODE) mounting $RESULTS_VOLUME_ID at /workspace (writes confined to /workspace/$RESULTS_PREFIX)"
   rm -f "$BUNDLE"; exit 0
+fi
+
+# Never double-launch a shard that is already up (makes retries idempotent).
+RUNNING_PODS_JSON=$(curl -sS --max-time 30 https://rest.runpod.io/v1/pods \
+  -H "Authorization: Bearer ${RUNPOD_API_KEY}" 2>/dev/null) || RUNNING_PODS_JSON=""
+
+# Any pod of this project up? Exit 0 = yes, 1 = no, 2 = could not tell.
+project_pod_up() {
+  [ -n "$RUNNING_PODS_JSON" ] || return 2
+  printf '%s' "$RUNNING_PODS_JSON" | NAME_BASE="$NAME_BASE" python3 -c '
+import json, os, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(2)
+if isinstance(d, dict):
+    d = d.get("data") or d.get("pods") or []
+for pod in d:
+    if isinstance(pod, dict) and str(pod.get("name", "")).startswith(os.environ["NAME_BASE"]) \
+       and pod.get("desiredStatus") not in ("TERMINATED", "EXITED"):
+        sys.exit(0)
+sys.exit(1)
+'
+}
+
+# SEED FROM RESEARCHGATE. Every fresh launch starts from a copy of ResearchGate's results:
+# wipe everything under $DST_ROOT/, then server-side copy $MIRROR_SRC/ into it. The source
+# is only ever read. Its code/, app/ and _pod_logs/ are not results and are left behind —
+# this launch uploads its own code next, and its pods write their own logs.
+# Skipped when it would destroy live work: a shard retry (SHARD_LIST — the other shards'
+# output is already here), or any pod of this project still up (it is reading code/ and
+# writing runs/ and its restart marker under _pod_logs/).
+if [ "$MIRROR_FROM_RG" = "1" ] && [ -z "${SHARD_LIST:-}" ]; then
+  set +e; project_pod_up; up=$?; set -e
+  if [ "$up" -eq 0 ]; then
+    echo "seed: a ${NAME_BASE} pod is still up — NOT wiping $DST_ROOT/"
+  elif [ "$up" -eq 2 ]; then
+    echo "FATAL: could not list pods, so cannot tell whether wiping $DST_ROOT/ is safe" >&2
+    echo "  retry, or MIRROR_FROM_RG=0 to launch without the seed" >&2
+    rm -f "$BUNDLE"; exit 1
+  else
+    # Trailing slashes matter: without them `results/ResearchGate` also matches
+    # `results/ResearchGateEOD`, and the rm would match any `results/ResearchGateEOD*`.
+    echo "seed: wiping $DST_ROOT/ ..."
+    aws s3 rm $S3FLAGS "$DST_ROOT/" --recursive --only-show-errors
+    echo "seed: copying $MIRROR_SRC/ -> $DST_ROOT/ ..."
+    # RunPod's S3 has no object tagging (GetObjectTagging -> 500) and its multipart
+    # UploadPartCopy fails CompleteMultipartUpload ("part 1 is missing") on the >8 MB
+    # strategy files. So: no property copy, and a 5 GB threshold that keeps every object
+    # a single-request CopyObject.
+    SEED_CFG=$(mktemp -t rg-seed-awscfg-XXXX)
+    printf '[default]\ns3 =\n  multipart_threshold = 5GB\n' > "$SEED_CFG"
+    AWS_CONFIG_FILE="$SEED_CFG" aws s3 cp $S3FLAGS "$MIRROR_SRC/" "$DST_ROOT/" \
+      --recursive --only-show-errors --copy-props none \
+      --exclude 'code/*' --exclude 'app/*' --exclude '_pod_logs/*' \
+      || { rm -f "$SEED_CFG" "$BUNDLE"; echo "FATAL: seed copy failed — not launching on a partial copy" >&2; exit 1; }
+    rm -f "$SEED_CFG"
+    echo "seed: done — $(aws s3 ls $S3FLAGS "$DST_ROOT/" --recursive --summarize | tail -2 | tr -s ' ' | tr '\n' ' ')"
+  fi
 fi
 
 aws s3 cp $S3FLAGS "$BUNDLE" "$DST_ROOT/code/bundle.tar.gz"
@@ -257,10 +318,6 @@ echo "  !! $NAME produced no bootstrap log — killing $POD_ID so it stops billi
 curl -sS -X DELETE "https://rest.runpod.io/v1/pods/$POD_ID" -H "Authorization: Bearer ${RUNPOD_API_KEY}" -o /dev/null
 return 42
 }
-
-# Never double-launch a shard that is already up (makes retries idempotent).
-RUNNING_PODS_JSON=$(curl -sS --max-time 30 https://rest.runpod.io/v1/pods \
-  -H "Authorization: Bearer ${RUNPOD_API_KEY}" 2>/dev/null) || RUNNING_PODS_JSON=""
 
 # Is a pod with exactly this name already up? Substring-grepping the raw JSON
 # missed the single-pod case entirely (see below), so ask properly. A list we

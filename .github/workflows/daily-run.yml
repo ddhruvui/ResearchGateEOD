@@ -90,7 +90,9 @@ jobs:
           for t in AAPL MSFT AVGO; do
             aws s3 cp $S3FLAGS "$SRC_BUCKET/data/ohlcv/$t.json" "$W/$t.json" --quiet
           done
-          if ! aws s3 cp $S3FLAGS "$DST_ROOT/runs/pso_lssvm_v1/latest/next_session.parquet" "$W/ns.parquet" --quiet; then
+          # launch.sh re-seeds $DST_ROOT from $MIRROR_SRC first, so judge what the pod will see.
+          NS_ROOT="$DST_ROOT"; [ "$MIRROR_FROM_RG" = "1" ] && NS_ROOT="$MIRROR_SRC"
+          if ! aws s3 cp $S3FLAGS "$NS_ROOT/runs/pso_lssvm_v1/latest/next_session.parquet" "$W/ns.parquet" --quiet; then
             echo "::error::no latest/next_session.parquet — nothing to grade; run /quarterly-backtest first"
             exit 1
           fi
