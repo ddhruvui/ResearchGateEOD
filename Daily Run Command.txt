@@ -1,1 +1,2 @@
-RUN_MODE=daily SHARDS=1 WATCHDOG_SEC=3600 bash scripts/launch.sh
+python3 -m src.ib_today --upload
+SKIP_IB=1 bash scripts/midrun.sh
