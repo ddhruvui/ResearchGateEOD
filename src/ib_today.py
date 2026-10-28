@@ -39,13 +39,12 @@ import argparse
 import asyncio
 import datetime as dt
 import json
-import os
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from .config import ROOT, Env, load_config, load_tickers
+from .config import ROOT, Env, load_config, load_dotenv, load_tickers
 from .storage import MidrunStore
 
 ET = ZoneInfo("America/New_York")
@@ -60,22 +59,6 @@ BATCH_SIZE = 50
 # Seconds to wait for a batch's live volumes; every ticker arrived within 8 s in testing
 LIVE_WAIT_SEC = 10.0
 LIVE_PASSES = 3
-
-
-def _load_dotenv(path: Path = ROOT / ".env") -> None:
-    """KEY=VALUE lines from .env into os.environ, never overriding what is already set
-    (same rule as scripts/_common.sh)."""
-    if not path.exists():
-        return
-    for line in path.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        k, v = line.split("=", 1)
-        k, v = k.removeprefix("export ").strip(), v.strip()
-        if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'":
-            v = v[1:-1]
-        os.environ.setdefault(k, v)
 
 
 def to_ib_symbol(symbol: str) -> str:
@@ -190,7 +173,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.upload:
         # Fail on credentials before spending ~20 s on IB, not after.
-        _load_dotenv()
+        load_dotenv()
         store = MidrunStore(Env.load())
 
     symbols = [s.upper() for s in args.tickers] or load_tickers(load_config())

@@ -49,7 +49,7 @@ import numpy as np
 import pandas as pd
 
 from .calendar_util import holiday_set, next_session
-from .config import DEFAULT_RESULTS_PREFIX, Env, load_config, load_tickers
+from .config import DEFAULT_RESULTS_PREFIX, Env, load_config, load_dotenv, load_tickers
 from .daily import stamped_at
 from .data import load_adjusted
 from .indicators import FEATURES, build_features, next_session_return
@@ -195,6 +195,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.local:
         src, dst = LocalSource(Path(args.local)), LocalResults(Path(args.local))
     else:
+        load_dotenv()
         env = Env.load()
         src, dst = LayeredSource(env), ResultStore(env)
     # Belt and braces on top of ResultStore's results/ guard: this project's own

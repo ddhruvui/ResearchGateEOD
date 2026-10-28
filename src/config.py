@@ -69,6 +69,23 @@ class Env:
         )
 
 
+def load_dotenv(path: Path = ROOT / ".env") -> None:
+    """KEY=VALUE lines from .env into os.environ, never overriding what is already set
+    (same rule as scripts/_common.sh). For the local tools run as `python -m src.x`;
+    pods get their environment from launch.sh instead."""
+    if not path.exists():
+        return
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        k, v = k.removeprefix("export ").strip(), v.strip()
+        if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'":
+            v = v[1:-1]
+        os.environ.setdefault(k, v)
+
+
 def load_config(path: str | Path | None = None) -> dict:
     p = Path(path) if path else ROOT / "config" / "experiment.yaml"
     with open(p) as fh:
