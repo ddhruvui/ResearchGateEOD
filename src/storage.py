@@ -17,11 +17,17 @@ also carries this project's output, confined to ONE prefix (results/ResearchGate
 
 Anything extra you want alongside the source data — derived columns, caches,
 diagnostics — goes under the results prefix.
+
+ONE EXCEPTION, by the user's decision (2026-10-27): `MidrunStore` writes the intraday
+IB bars from src/ib_today.py to data/midrun/<TICKER>.json. It can write nothing else —
+one flat file name per call, pinned under data/midrun/, no delete — so data/ohlcv/ and
+the rest of data/ stay unreachable.
 """
 from __future__ import annotations
 
 import io
 import json
+import re
 from typing import Iterator
 
 import boto3
@@ -200,3 +206,32 @@ class ResultStore:
         buf = io.BytesIO()
         df.to_parquet(buf, index=False, compression="snappy")
         self.put_bytes(key, buf.getvalue(), "application/octet-stream")
+
+
+MIDRUN_PREFIX = "data/midrun"
+# One flat file name: a ticker (AAPL, BRK-B) or the _run.json manifest. No '/', so
+# no key can reach data/ohlcv/ or anything else outside data/midrun/.
+_MIDRUN_NAME = re.compile(r"^(?:[A-Z0-9][A-Z0-9.-]{0,14}|_run)\.json$")
+
+
+class MidrunStore:
+    """WRITE-ONLY view of data/midrun/ on the source volume — the one place this
+    project writes under data/ (see the module docstring). Intraday bars from
+    src/ib_today.py land at data/midrun/<TICKER>.json. Overwrites a ticker's own
+    file; never deletes, never reads, never touches any other key."""
+
+    def __init__(self, env: Env):
+        self._s3 = _client(env)
+        self._bucket = env.source_volume
+
+    def url(self, name: str = "") -> str:
+        return f"s3://{self._bucket}/{MIDRUN_PREFIX}/{name}"
+
+    def _full(self, name: str) -> str:
+        if not isinstance(name, str) or not _MIDRUN_NAME.match(name) or ".." in name:
+            raise ValueError(f"bad midrun file name {name!r}: must be <TICKER>.json or _run.json")
+        return f"{MIDRUN_PREFIX}/{name}"
+
+    def put_json(self, name: str, obj) -> None:
+        self._s3.put_object(Bucket=self._bucket, Key=self._full(name),
+                            Body=json.dumps(obj).encode(), ContentType="application/json")

@@ -7,7 +7,7 @@ import io
 import pytest
 
 from src.config import ROOT, SOURCE_VOLUME_ID, Env, results_prefix
-from src.storage import LayeredSource, ResultStore, SourceStore
+from src.storage import LayeredSource, MidrunStore, ResultStore, SourceStore
 
 PREFIX = "results/ResearchGateEOD"
 
@@ -177,3 +177,36 @@ def test_env_rejects_a_repointed_source(monkeypatch):
     monkeypatch.setenv("SOURCE_VOLUME_ID", "someothervol")
     with pytest.raises(RuntimeError, match="pinned"):
         Env.load()
+
+
+# ---- the one exception: MidrunStore writes data/midrun/<TICKER>.json and nothing else ----
+
+def _midrun():
+    ms = MidrunStore.__new__(MidrunStore)
+    ms._bucket, ms._s3 = SOURCE_VOLUME_ID, _StubS3()
+    return ms
+
+
+def test_midrun_store_writes_only_flat_files_under_data_midrun():
+    ms = _midrun()
+    for name in ("AAPL.json", "BRK-B.json", "_run.json"):
+        ms.put_json(name, [{"date": "2026-10-27"}])
+    assert set(ms._s3.puts) == {"data/midrun/AAPL.json", "data/midrun/BRK-B.json",
+                                "data/midrun/_run.json"}
+
+
+@pytest.mark.parametrize("bad", [
+    "../ohlcv/AAPL.json", "ohlcv/AAPL.json", "data/ohlcv/AAPL.json", "/AAPL.json",
+    "AAPL", "aapl.json", "AAPL.json/", "..json", "A..json", "", "AAPL.parquet", "_other.json",
+])
+def test_midrun_store_rejects_any_other_key(bad):
+    ms = _midrun()
+    with pytest.raises(ValueError):
+        ms.put_json(bad, [])
+    assert not ms._s3.puts
+
+
+def test_midrun_store_has_no_read_or_delete():
+    allowed = {"put_json", "url"}
+    public = {n for n in dir(MidrunStore) if not n.startswith("_")}
+    assert public == allowed

@@ -63,11 +63,25 @@ def split_volume_factor(splits: list | None, dates: pd.DatetimeIndex) -> np.ndar
     return factor
 
 
-def load_adjusted(source: SourceStore, ticker: str, cfg: dict) -> pd.DataFrame:
-    """Return a date-sorted adjusted OHLCV frame for one ticker. Read-only on source."""
+def newer_rows(rows: list, extra: list | None) -> list:
+    """The rows of `extra` dated after the newest row of `rows` — the intraday bar from
+    data/midrun/<T>.json once the vendor file has not caught up to its day yet."""
+    if not extra:
+        return []
+    last = max((str(r.get("date", ""))[:10] for r in rows if isinstance(r, dict)), default="")
+    return [r for r in extra if isinstance(r, dict) and str(r.get("date", ""))[:10] > last]
+
+
+def load_adjusted(source: SourceStore, ticker: str, cfg: dict,
+                  extra_rows: list | None = None) -> pd.DataFrame:
+    """Return a date-sorted adjusted OHLCV frame for one ticker. Read-only on source.
+
+    `extra_rows` (same row format) are appended IN MEMORY when dated after the vendor's
+    last bar; the source file itself is only ever read."""
     key = source_key(cfg, ticker)
     rows = source.get_json(key)
-    df = pd.DataFrame(rows)
+    extra = newer_rows(rows, extra_rows)
+    df = pd.DataFrame(list(rows) + extra)
     missing = [c for c in _COLS if c not in df.columns]
     if missing:
         raise ValueError(f"{ticker}: source file missing columns {missing}")
@@ -100,4 +114,6 @@ def load_adjusted(source: SourceStore, ticker: str, cfg: dict) -> pd.DataFrame:
     # High/low must bracket the close; a handful of vendor bars violate this.
     bad = (out["adj_high"] < out["adj_low"]) | out[["adj_open", "adj_high", "adj_low",
                                                     "adj_close"]].isna().any(axis=1)
-    return out[~bad].reset_index(drop=True)
+    out = out[~bad].reset_index(drop=True)
+    out.attrs["appended"] = len(extra)
+    return out
