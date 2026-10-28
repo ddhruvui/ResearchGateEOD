@@ -8,7 +8,7 @@
 Environment (see .env.example):
     MONGO_URI     mongodb+srv://user:<db_password>@host/...   (placeholder allowed)
     DB_PASSWORD   substituted for <db_password>, URL-encoded
-    MONGO_DB      database name, default ResearchGateEOD
+    MONGO_DB      database name: ResearchGateEOD, and nothing else is accepted — see db_name()
 
 Collections written, in database MONGO_DB:
     runs          _id = run_id. metrics.json verbatim, the summary / ticker / year
@@ -22,6 +22,11 @@ Collections written, in database MONGO_DB:
                   src/strategy.py: per-stop summary, the daily balance series and
                   tomorrow's pending plan. Absent when strategy.json has not been
                   written, which is not an error — the rest still publishes.
+
+With --midrun, the intraday prediction from src/midrun.py instead (runs/<run_id>/midrun/latest/):
+    midrun        _id = "<run_id>:<ticker>". The latest midrun guess per ticker; replaced
+                  each publish, tickers no longer in it removed.
+    midrun_runs   _id = "<run_id>:<stamp>". One run_meta per midrun, kept as history.
 
 Graded verdicts are locked upstream, so a daily publish only inserts rows Mongo
 does not have yet. A rebuild changes the old rows too; src.merge passes full=True,
@@ -43,10 +48,14 @@ from pathlib import Path
 
 import pandas as pd
 
-from .config import Env, load_config
+from .config import Env, load_config, load_dotenv
 from .storage import ResultStore
 
 COSTS_BPS = (0, 1, 5, 10)          # must match the UI's cost toggle
+# The ONLY database this project writes. ResearchGate's dashboard reads "ResearchGate" on
+# the same cluster, so MONGO_DB is checked, not trusted: a shell that still exports
+# ResearchGate's MONGO_DB would otherwise publish over it.
+MONGO_DB = "ResearchGateEOD"
 BATCH = 5000
 
 
@@ -63,6 +72,13 @@ def mongo_uri() -> str | None:
             raise RuntimeError("MONGO_URI has a <db_password> placeholder but DB_PASSWORD is unset")
         uri = uri.replace("<db_password>", urllib.parse.quote_plus(pw))
     return uri
+
+
+def db_name() -> str:
+    name = os.environ.get("MONGO_DB", MONGO_DB).strip().strip("'\"")
+    if name != MONGO_DB:
+        raise RuntimeError(f"MONGO_DB is {name!r}; this project publishes only to {MONGO_DB!r}")
+    return name
 
 
 def connect(uri: str):
@@ -432,6 +448,7 @@ def publish(*, full: bool = False, from_dir: str | None = None, config: str | No
             dry_run: bool = False) -> dict | None:
     """Publish latest/ to Mongo. Returns the write summary, or None when MONGO_URI
     is unset (so callers can make it optional). Raises on a real failure."""
+    name = db_name()
     uri = mongo_uri()
     if not uri and not dry_run:
         print("[publish] MONGO_URI not set — skipping Mongo publish", flush=True)
@@ -459,7 +476,7 @@ def publish(*, full: bool = False, from_dir: str | None = None, config: str | No
         return {"dry_run": True, "rows": len(preds)}
 
     client = connect(uri)
-    db = client[os.environ.get("MONGO_DB", "ResearchGateEOD")]
+    db = client[name]
     out = write_all(db, b, full, preds)
     print(f"[publish] {db.name}: predictions {out['mode']} +{out['predictions']:,} "
           f"(now {out['in_mongo']:,}), next_session {out['next_session']}, "
@@ -469,15 +486,66 @@ def publish(*, full: bool = False, from_dir: str | None = None, config: str | No
     return out
 
 
+def midrun_docs(rows: list[dict], meta: dict, run_id: str) -> tuple[list[dict], dict]:
+    """(per-ticker docs, run doc) for the midrun collections."""
+    docs = [{"_id": f"{run_id}:{r['ticker']}", "run_id": run_id, **r}
+            for r in rows if r.get("ticker")]
+    run = {"_id": f"{run_id}:{meta.get('stamp')}", "run_id": run_id, **meta}
+    return docs, run
+
+
+def write_midrun(db, docs: list[dict], run: dict) -> None:
+    from pymongo import ASCENDING, DeleteMany, ReplaceOne
+    run_id = run["run_id"]
+    db["midrun"].create_index([("run_id", ASCENDING), ("pred_return", ASCENDING)], name="run_pred")
+    ops = [ReplaceOne({"_id": d["_id"]}, d, upsert=True) for d in docs]
+    ops.append(DeleteMany({"run_id": run_id, "_id": {"$nin": [d["_id"] for d in docs]}}))
+    db["midrun"].bulk_write(ops, ordered=True)
+    run = dict(run, published_at=datetime.now(timezone.utc).isoformat())
+    db["midrun_runs"].replace_one({"_id": run["_id"]}, run, upsert=True)
+
+
+def publish_midrun(*, config: str | None = None, dry_run: bool = False) -> dict | None:
+    """Publish runs/<run_id>/midrun/latest/ to the midrun collections."""
+    name = db_name()
+    uri = mongo_uri()
+    if not uri and not dry_run:
+        print("[publish] MONGO_URI not set — skipping Mongo publish", flush=True)
+        return None
+    cfg = load_config(config)
+    run_id = cfg["run_id"]
+    base = f"{cfg.get('output', {}).get('prefix', 'runs')}/{run_id}/midrun/latest"
+    dst = ResultStore(Env.load())
+    rows = json.loads(dst.get_bytes(f"{base}/next_session.json"))
+    meta = json.loads(dst.get_bytes(f"{base}/run_meta.json"))
+    docs, run = midrun_docs(rows, meta, run_id)
+    print(f"[publish] {dst.url(base)}: {len(docs)} midrun guesses as of "
+          f"{meta.get('midrun_as_of')} for {meta.get('for_session')}", flush=True)
+    if dry_run:
+        print(f"[publish] dry run — nothing written (would write {name}.midrun, {name}.midrun_runs)")
+        return {"dry_run": True, "rows": len(docs)}
+    client = connect(uri)
+    db = client[name]
+    write_midrun(db, docs, run)
+    print(f"[publish] {db.name}: midrun {len(docs)} tickers, midrun_runs +1 ({run['_id']})", flush=True)
+    client.close()
+    return {"midrun": len(docs), "run": run["_id"]}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--config", default=None)
     ap.add_argument("--from-dir", default=None, help="read a local results dir instead of S3")
     ap.add_argument("--full", action="store_true", help="replace every prediction row for the run")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--midrun", action="store_true", help="publish midrun/latest/ instead of latest/")
     args = ap.parse_args()
+    load_dotenv()                                  # local runs; a pod's env is already set
     try:
-        publish(full=args.full, from_dir=args.from_dir, config=args.config, dry_run=args.dry_run)
+        if args.midrun:
+            publish_midrun(config=args.config, dry_run=args.dry_run)
+        else:
+            publish(full=args.full, from_dir=args.from_dir, config=args.config, dry_run=args.dry_run)
         return 0
     except Exception as exc:                       # never take the pipeline down with it
         print(f"[publish] FAILED: {type(exc).__name__}: {exc}", file=sys.stderr, flush=True)
