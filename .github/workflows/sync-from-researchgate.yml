@@ -1,0 +1,89 @@
+# Every morning at 06:00 US/Eastern: once ResearchGate's 04:30 daily has finished, copy its
+# results into results/ResearchGateEOD and publish them to MongoDB ResearchGateEOD
+# (scripts/sync_from_rg.sh). No pod: ResearchGate already graded and predicted, and this
+# project's own addition is the intraday midrun, run by hand with scripts/midrun.sh.
+#
+# Replaces the 04:30 daily-run workflow, which launched an EOD pod at the same minute as
+# ResearchGate's: its copy could catch ResearchGate's previous run or a half-written one, and
+# the pod then redid ResearchGate's work.
+#
+# SETUP: one repository secret, RESEARCHGATEEOD_ENV = the full contents of .env
+#   (Settings -> Secrets and variables -> Actions -> New repository secret).
+#
+# Cron is UTC and has no DST, so both offsets are scheduled and the `gate` step lets through only
+# the one that is 06:00 in New York today (EDT = UTC-4 -> 10:00 UTC, EST = UTC-5 -> 11:00 UTC).
+name: sync-from-researchgate
+
+on:
+  schedule:
+    - cron: "0 10 * * *"    # 06:00 EDT (summer)
+    - cron: "0 11 * * *"    # 06:00 EST (winter)
+  workflow_dispatch:         # manual run from the Actions tab
+    inputs:
+      dry_run:
+        description: "Copy lists only, publish prints only"
+        type: boolean
+        default: false
+
+# Never two syncs at once: both would wipe and refill the same prefix.
+concurrency:
+  group: sync-from-researchgate
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    # The script waits up to 90 min for ResearchGate to finish; copy + publish take ~5 min.
+    timeout-minutes: 110
+    steps:
+      - name: gate (06:00 New York only)
+        id: gate
+        run: |
+          case "${{ github.event.schedule }}" in
+            "0 10 * * *") want="-0400" ;;
+            "0 11 * * *") want="-0500" ;;
+            *)            echo "run=true" >> "$GITHUB_OUTPUT"; exit 0 ;;   # workflow_dispatch
+          esac
+          now="$(TZ=America/New_York date +%z)"
+          if [ "$now" = "$want" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "New York is UTC$now today; this is the UTC$want schedule — skipping."
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.gate.outputs.run == 'true'
+
+      - name: write .env
+        if: steps.gate.outputs.run == 'true'
+        env:
+          RESEARCHGATEEOD_ENV: ${{ secrets.RESEARCHGATEEOD_ENV }}
+        run: |
+          [ -n "$RESEARCHGATEEOD_ENV" ] || { echo "::error::secret RESEARCHGATEEOD_ENV is not set"; exit 1; }
+          printf '%s\n' "$RESEARCHGATEEOD_ENV" > .env
+          chmod 600 .env
+          # GitHub masks a secret only as a whole string. Register every individual value so no
+          # key can leak line by line.
+          while IFS= read -r line || [ -n "$line" ]; do
+            case "$line" in
+              [A-Za-z_]*=?*)
+                v="${line#*=}"; v="${v%\"}"; v="${v#\"}"; v="${v%\'}"; v="${v#\'}"
+                # >= 8 chars: every key/id qualifies; short values like RUNPOD_VCPU=16 would just
+                # turn every "16" in the log into ***.
+                [ "${#v}" -ge 8 ] && echo "::add-mask::$v" ;;
+            esac
+          done < .env
+
+      # Only what src.publish_mongo imports; the aws CLI is preinstalled on ubuntu-latest.
+      - name: install python deps
+        if: steps.gate.outputs.run == 'true'
+        run: pip install --quiet pandas pyarrow boto3 PyYAML pymongo certifi
+
+      - name: sync
+        if: steps.gate.outputs.run == 'true'
+        env:
+          DRY_RUN: ${{ inputs.dry_run && '1' || '' }}
+        run: bash scripts/sync_from_rg.sh

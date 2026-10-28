@@ -1,9 +1,21 @@
 # Daily use
 
-**Automatic:** GitHub Actions runs this every day at 04:30 New York time
-([.github/workflows/daily-run.yml](.github/workflows/daily-run.yml)): it checks the new bar is in,
-launches the pod, and reaps it. Needs the repo secret `RESEARCHGATEEOD_ENV` = the full contents of `.env`.
-Run it by hand from the Actions tab (**daily-run → Run workflow**), or from here:
+**Automatic:** this project does not run its own daily. ResearchGate's daily runs at 04:30 New York
+time; at 06:00 GitHub Actions
+([.github/workflows/sync-from-researchgate.yml](.github/workflows/sync-from-researchgate.yml))
+waits for it to finish, copies `results/ResearchGate/` into `results/ResearchGateEOD/` and
+publishes to MongoDB `ResearchGateEOD`. No pod. Needs the repo secret `RESEARCHGATEEOD_ENV` = the
+full contents of `.env`. Run it by hand from the Actions tab
+(**sync-from-researchgate → Run workflow**), or from here:
+
+```bash
+bash scripts/sync_from_rg.sh
+```
+
+**During the day:** `bash scripts/midrun.sh` predicts the next session as if IB's current price
+were today's close (copy from ResearchGate, upload IB bars, predict, publish).
+
+To run this project's own daily on a pod instead (not needed while it mirrors ResearchGate):
 
 ```bash
 RUN_MODE=daily SHARDS=1 WATCHDOG_SEC=3600 bash scripts/launch.sh
