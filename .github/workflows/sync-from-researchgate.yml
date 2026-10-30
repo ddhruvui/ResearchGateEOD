@@ -77,7 +77,19 @@ jobs:
             esac
           done < .env
 
-      # Only what src.publish_mongo imports; the aws CLI is preinstalled on ubuntu-latest.
+      # The image's aws CLI (2.38.5 on ubuntu-26.04) lists RunPod's S3 fine but every object
+      # request (GetObject, DeleteObject) comes back SignatureDoesNotMatch. 2.31.18 — the version
+      # these scripts are run with locally — works, so pin it.
+      - name: install aws CLI 2.31.18
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          curl -sSfL https://awscli.amazonaws.com/awscli-exe-linux-x86_64-2.31.18.zip -o "$RUNNER_TEMP/awscli.zip"
+          unzip -q "$RUNNER_TEMP/awscli.zip" -d "$RUNNER_TEMP"
+          "$RUNNER_TEMP/aws/install" -i "$HOME/.aws-cli" -b "$HOME/.aws-cli/bin"
+          echo "$HOME/.aws-cli/bin" >> "$GITHUB_PATH"
+          "$HOME/.aws-cli/bin/aws" --version
+
+      # Only what src.publish_mongo imports.
       - name: install python deps
         if: steps.gate.outputs.run == 'true'
         run: pip install --quiet pandas pyarrow boto3 PyYAML pymongo certifi

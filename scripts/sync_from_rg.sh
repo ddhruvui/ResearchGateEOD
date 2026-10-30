@@ -58,6 +58,13 @@ except Exception:
 '
 }
 
+# rg_run_date hides read errors (a missing stamp just means "not today"), so check once up front
+# that the object is readable at all — otherwise an S3 client/credential problem looks like
+# "no run today" for WAIT_MIN minutes and only surfaces at the wipe.
+if ! err=$(aws s3 cp $S3FLAGS "$RG_META" - 2>&1 >/dev/null); then
+  echo "::error::cannot read $RG_META — $err" >&2; exit 1
+fi
+
 deadline=$(( $(date +%s) + WAIT_MIN * 60 ))
 while :; do
   set +e; rg_pod_up; up=$?; set -e
