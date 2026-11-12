@@ -1,1 +1,2 @@
-python3 -m src.ib_today --upload && SKIP_IB=1 bash scripts/midrun.sh
+python3 -m src.ib_today --upload 
+SKIP_IB=1 bash scripts/midrun.sh

@@ -28,6 +28,10 @@ With --midrun, the intraday prediction from src/midrun.py instead (runs/<run_id>
                   each publish, tickers no longer in it removed.
     midrun_runs   _id = "<run_id>:<stamp>". One run_meta per midrun, kept as history.
 
+From src.ib_today --upload, in database LastPrice (not MONGO_DB):
+    LastPrice     _id = "latest". One document, updated in place on every upload:
+                  {uploadedAt, values: [{ticker, price}, ...]}.
+
 Graded verdicts are locked upstream, so a daily publish only inserts rows Mongo
 does not have yet. A rebuild changes the old rows too; src.merge passes full=True,
 and a fingerprint over the already-published rows catches a rebuild that reaches
@@ -56,6 +60,10 @@ COSTS_BPS = (0, 1, 5, 10)          # must match the UI's cost toggle
 # the same cluster, so MONGO_DB is checked, not trusted: a shell that still exports
 # ResearchGate's MONGO_DB would otherwise publish over it.
 MONGO_DB = "ResearchGateEOD"
+# The one exception: src.ib_today --upload keeps a single document of every ticker's
+# last price in its own database (and a collection of the same name).
+LAST_PRICE_DB = "LastPrice"
+LAST_PRICE_ID = "latest"
 BATCH = 5000
 
 
@@ -530,6 +538,34 @@ def publish_midrun(*, config: str | None = None, dry_run: bool = False) -> dict 
     print(f"[publish] {db.name}: midrun {len(docs)} tickers, midrun_runs +1 ({run['_id']})", flush=True)
     client.close()
     return {"midrun": len(docs), "run": run["_id"]}
+
+
+def last_price_doc(prices: dict[str, float], prev: dict | None, uploaded_at: datetime) -> dict:
+    """The single LastPrice document: {uploadedAt, values: [{ticker, price}, ...]}.
+    A ticker this upload has no price for keeps its previous one, the way its
+    data/midrun/<T>.json stays on the volume."""
+    merged = {v["ticker"]: v["price"] for v in (prev or {}).get("values", [])}
+    merged.update({t: float(p) for t, p in prices.items()})
+    return {"_id": LAST_PRICE_ID, "uploadedAt": uploaded_at,
+            "values": [{"ticker": t, "price": merged[t]} for t in sorted(merged)]}
+
+
+def publish_last_price(prices: dict[str, float], uri: str) -> int:
+    """Update the one document in LastPrice.LastPrice (created on the first upload);
+    returns how many tickers it holds."""
+    client = connect(uri)
+    try:
+        col = client[LAST_PRICE_DB][LAST_PRICE_DB]
+        doc = last_price_doc(prices, col.find_one({"_id": LAST_PRICE_ID}),
+                             datetime.now(timezone.utc))
+        # update, not insert: the first upload creates the document, every later one
+        # updates that same document in place.
+        col.update_one({"_id": LAST_PRICE_ID},
+                       {"$set": {"uploadedAt": doc["uploadedAt"], "values": doc["values"]}},
+                       upsert=True)
+        return len(doc["values"])
+    finally:
+        client.close()
 
 
 def main() -> int:

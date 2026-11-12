@@ -60,3 +60,16 @@ def test_write_midrun_touches_only_its_two_collections():
     assert len(db["midrun"].ops) == 3                     # 2 upserts + prune of stale tickers
     assert db["midrun_runs"].replaced[0]["_id"] == "pso_lssvm_v1:20261028T151734Z"
     assert "published_at" in db["midrun_runs"].replaced[0]
+
+
+def test_last_price_doc_is_one_doc_merging_previous_tickers():
+    from datetime import datetime, timezone
+    now = datetime(2026, 11, 12, 19, 0, tzinfo=timezone.utc)
+    prev = {"_id": "latest", "values": [{"ticker": "AAPL", "price": 1.0},
+                                        {"ticker": "MSFT", "price": 2.0}]}
+    doc = pm.last_price_doc({"NVDA": 3, "AAPL": 1.5}, prev, now)
+    assert doc == {"_id": "latest", "uploadedAt": now,
+                   "values": [{"ticker": "AAPL", "price": 1.5},
+                              {"ticker": "MSFT", "price": 2.0},
+                              {"ticker": "NVDA", "price": 3.0}]}
+    assert pm.last_price_doc({"A": 1}, None, now)["values"] == [{"ticker": "A", "price": 1.0}]

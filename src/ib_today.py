@@ -34,6 +34,10 @@ other key, so data/ohlcv/ is never touched. A ticker with no bar this run keeps 
 midrun file; its "date" and _run.json's "missing" show it is stale. Credentials come
 from the environment or this repo's .env.
 
+--upload also rewrites one MongoDB document, LastPrice.LastPrice {_id: "latest"}:
+{uploadedAt, values: [{ticker, price}, ...]}, price being each bar's close (the last
+trade). Skipped when MONGO_URI is unset; see publish_mongo.publish_last_price().
+
 Needs Trader Workstation (or IB Gateway) running on this machine with the API enabled,
 and `pip install ib_async`. Connects read-only. Local tool — the pods never run this.
 """
@@ -208,6 +212,8 @@ def main(argv: list[str] | None = None) -> int:
         # Fail on credentials before spending ~20 s on IB, not after.
         load_dotenv()
         store = MidrunStore(Env.load())
+        from . import publish_mongo
+        mongo = publish_mongo.mongo_uri()
 
     symbols = [s.upper() for s in args.tickers] or load_tickers(load_config())
     now = dt.datetime.now(ET)
@@ -246,6 +252,15 @@ def main(argv: list[str] | None = None) -> int:
             list(pool.map(lambda t: store.put_json(f"{t}.json", [bars[t]]), bars))
         store.put_json("_run.json", manifest)     # last: its as_of marks a complete upload
         print(f"uploaded {len(bars)} bars to {store.url()}", file=sys.stderr)
+        if not mongo:
+            print("MONGO_URI not set — skipping the LastPrice upload", file=sys.stderr)
+        else:
+            try:    # the volume already has the bars; a Mongo failure must not fail the run
+                n = publish_mongo.publish_last_price({t: b["close"] for t, b in bars.items()}, mongo)
+                print(f"updated Mongo LastPrice: {len(bars)} prices, {n} tickers in the doc",
+                      file=sys.stderr)
+            except Exception as exc:
+                print(f"LastPrice upload FAILED: {type(exc).__name__}: {exc}", file=sys.stderr)
     if hist_close:
         print(f"no live last trade, close from IB's historical bar for {len(hist_close)}: "
               f"{', '.join(hist_close[:10])}{' ...' if len(hist_close) > 10 else ''}", file=sys.stderr)
