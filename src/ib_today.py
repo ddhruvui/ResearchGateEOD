@@ -10,10 +10,14 @@ far — the same keys the acquisition pipeline publishes once the day is over:
 adjusted_close == close: the newest bar always carries adjustment factor 1 (the vendor
 file shows the same on its last row), and splits/dividends only rescale older bars.
 
-open/high/low/close come from IB's 1-day historical bar (09:30-16:00 ET): checked against
-the vendor's 2026-10-26 row, close matched exactly on 149/149 stocks and O/H/L to a median
-0.001%. volume comes from the live feed instead — see live_volumes(). A past --date has
-no live feed, so its volume undercounts by about half.
+open/high/low come from IB's 1-day historical bar (09:30-16:00 ET): checked against the
+vendor's 2026-10-26 row, O/H/L matched to a median 0.001%. close is the live feed's last
+trade (tick 4/68) and volume its day volume — see live_quotes() and apply_live(). The
+last trade can fall outside the 09:30-16:00 range (pre-market, after hours, IB's overnight
+session from 20:00 ET), so high/low widen to include it. A ticker with no last trade keeps
+the bar's close, and _run.json's "close_from_historical_bar" lists it. A past --date has
+no live feed: close is that day's bar close (matched the vendor exactly on 149/149) and
+volume undercounts by about half.
 
   python -m src.ib_today                    # every ticker in tickers.json
   python -m src.ib_today NVDA AAPL          # just these
@@ -56,7 +60,7 @@ DEFAULT_PORT = 7496
 CONCURRENCY = 40
 # TWS allows ~100 concurrent market data lines by default
 BATCH_SIZE = 50
-# Seconds to wait for a batch's live volumes; every ticker arrived within 8 s in testing
+# Seconds to wait for a batch's live quotes; every ticker arrived within 8 s in testing
 LIVE_WAIT_SEC = 10.0
 LIVE_PASSES = 3
 
@@ -88,47 +92,82 @@ async def _fetch(ib, contract, end, all_hours, sem):
     return contract, (bars[-1] if bars else None)
 
 
-async def live_volumes(ib, contracts, wait: float = LIVE_WAIT_SEC) -> dict[str, int]:
-    """{IB symbol: today's volume} from the live feed (tick 8).
+def _positive(x) -> float | None:
+    """x if it is a real price/size > 0; IB leaves an unset field NaN (or -1)."""
+    import math
+
+    return float(x) if x is not None and not math.isnan(x) and x > 0 else None
+
+
+async def live_quotes(ib, contracts, wait: float = LIVE_WAIT_SEC) -> dict[str, dict]:
+    """{IB symbol: {"last": price, "volume": shares}} from the live feed — last trade
+    (tick 4, or 68 delayed) and day volume (tick 8/74). A field that never arrived is
+    left out.
 
     IB's historical TRADES bars leave out a large share of the day's prints: on
     2026-10-26 the 09:30-16:00 bar's volume was 10-69% (median 49%) below the vendor's
     for all 149 stocks, while open/high/low/close matched. The live feed's day volume is
     the full consolidated figure, about 2x the bar — the vendor's basis."""
     ib.reqMarketDataType(3)   # live where subscribed, else 15-min delayed
-    out = {}
+    out: dict[str, dict] = {}
     # The first batch after connecting is slow to fill (14 of 50 still empty after 10 s
     # in testing), so retry whatever is missing.
     for _ in range(LIVE_PASSES):
-        todo = [c for c in contracts if c.symbol not in out]
+        todo = [c for c in contracts if len(out.get(c.symbol, {})) < 2]
         if not todo:
             break
-        out.update(await _live_pass(ib, todo, wait))
+        for sym, q in (await _live_pass(ib, todo, wait)).items():
+            out.setdefault(sym, {}).update(q)
     return out
 
 
-async def _live_pass(ib, contracts, wait: float) -> dict[str, int]:
-    import math
-
+async def _live_pass(ib, contracts, wait: float) -> dict[str, dict]:
     out = {}
     for i in range(0, len(contracts), BATCH_SIZE):
         batch = contracts[i:i + BATCH_SIZE]
         tickers = [ib.reqMktData(c, "", False, False) for c in batch]
         for _ in range(int(wait / 0.25)):
             await asyncio.sleep(0.25)
-            if all(t.volume == t.volume and t.volume > 0 for t in tickers):
+            if all(_positive(t.volume) and _positive(t.last) for t in tickers):
                 break
         for c, t in zip(batch, tickers):
             ib.cancelMktData(c)
-            if t.volume is not None and not math.isnan(t.volume) and t.volume > 0:
-                out[c.symbol] = int(round(t.volume))
+            q = {"last": _positive(t.last), "volume": _positive(t.volume)}
+            q = {k: v for k, v in q.items() if v is not None}
+            if q:
+                out[c.symbol] = q
     return out
 
 
-async def fetch_bars(ib, symbols: list[str], day: dt.date, all_hours: bool) -> tuple[dict, dict]:
-    """({our ticker: bar}, {our ticker: volume source}) for `day`. A ticker whose newest
-    bar is not `day` (pre-open, holiday, halted) is left out rather than passed off as
-    that day's bar."""
+def apply_live(bar: dict, quote: dict | None) -> tuple[dict, str, str]:
+    """(bar, close source, volume source): today's historical bar with the live feed's
+    last trade as close/adjusted_close and its day volume, where they are usable.
+
+    The last trade can sit outside the 09:30-16:00 bar (after hours, overnight), so
+    high/low widen to keep low <= close <= high."""
+    bar, quote = dict(bar), quote or {}
+    close_src = vol_src = "historical_bar"
+    last = quote.get("last")
+    if last:
+        bar["close"] = bar["adjusted_close"] = float(last)
+        bar["high"] = max(bar["high"], bar["close"])
+        bar["low"] = min(bar["low"], bar["close"])
+        close_src = "live_last"
+    # The live day volume is a superset of the bar's, so a smaller one is not today's:
+    # after 20:00 ET it resets to the overnight session (NVDA read 163,444 at 23:21
+    # against a 46.9M bar).
+    vol = int(round(quote.get("volume") or 0))
+    if vol >= bar["volume"] and vol > 0:
+        bar["volume"] = vol
+        vol_src = "live"
+    return bar, close_src, vol_src
+
+
+async def fetch_bars(ib, symbols: list[str], day: dt.date,
+                     all_hours: bool) -> tuple[dict, dict, dict]:
+    """({our ticker: bar}, {ticker: close source}, {ticker: volume source}) for `day`.
+    A ticker whose newest bar is not `day` (pre-open, holiday, halted) is left out
+    rather than passed off as that day's bar."""
     from ib_async import Stock
 
     ours = {to_ib_symbol(s): s for s in symbols}
@@ -140,20 +179,14 @@ async def fetch_bars(ib, symbols: list[str], day: dt.date, all_hours: bool) -> t
     sem = asyncio.Semaphore(CONCURRENCY)
     got = await asyncio.gather(*(_fetch(ib, c, end, all_hours, sem) for c in contracts))
     got = [(c, b) for c, b in got if b is not None and str(b.date)[:10] == day.isoformat()]
-    # The live feed only knows today; a past day keeps the (low) historical volume.
-    live = await live_volumes(ib, [c for c, _ in got]) if today else {}
-    out, vol_src = {}, {}
+    # The live feed only knows today; a past day keeps the bar's close and (low) volume.
+    live = await live_quotes(ib, [c for c, _ in got]) if today else {}
+    out, close_src, vol_src = {}, {}, {}
     for c, b in got:
-        bar = to_bar(day.isoformat(), b)
-        # The live day volume is a superset of the bar's, so a smaller one is not today's:
-        # after 20:00 ET it resets to the overnight session (NVDA read 163,444 at 23:21
-        # against a 46.9M bar).
-        use_live = live.get(c.symbol, 0) >= bar["volume"]
-        if use_live:
-            bar["volume"] = live[c.symbol]
-        out[ours[c.symbol]] = bar
-        vol_src[ours[c.symbol]] = "live" if use_live else "historical_bar"
-    return out, vol_src
+        t = ours[c.symbol]
+        out[t], close_src[t], vol_src[t] = apply_live(to_bar(day.isoformat(), b),
+                                                      live.get(c.symbol))
+    return out, close_src, vol_src
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -183,15 +216,18 @@ def main(argv: list[str] | None = None) -> int:
     ib = IB()
     ib.connect(args.host, args.port, clientId=args.client_id, readonly=True)
     try:
-        bars, vol_src = ib.run(fetch_bars(ib, symbols, day, args.all_hours))
+        bars, close_src, vol_src = ib.run(fetch_bars(ib, symbols, day, args.all_hours))
     finally:
         ib.disconnect()
     missing = sorted(set(symbols) - set(bars))
+    hist_close = sorted(t for t, s in close_src.items() if s != "live_last")
     hist_vol = sorted(t for t, s in vol_src.items() if s != "live")
     manifest = {
         "date": day.isoformat(), "as_of": now.isoformat(timespec="seconds"),
         "session": "all_hours" if args.all_hours else "regular",
+        "close": "live last trade",
         "count": len(bars), "missing": missing,
+        "close_from_historical_bar": hist_close,
         "volume_from_historical_bar": hist_vol,
     }
 
@@ -210,6 +246,9 @@ def main(argv: list[str] | None = None) -> int:
             list(pool.map(lambda t: store.put_json(f"{t}.json", [bars[t]]), bars))
         store.put_json("_run.json", manifest)     # last: its as_of marks a complete upload
         print(f"uploaded {len(bars)} bars to {store.url()}", file=sys.stderr)
+    if hist_close:
+        print(f"no live last trade, close from IB's historical bar for {len(hist_close)}: "
+              f"{', '.join(hist_close[:10])}{' ...' if len(hist_close) > 10 else ''}", file=sys.stderr)
     if hist_vol:
         print(f"volume from IB's historical bar (undercounts ~2x) for {len(hist_vol)}: "
               f"{', '.join(hist_vol[:10])}{' ...' if len(hist_vol) > 10 else ''}", file=sys.stderr)
