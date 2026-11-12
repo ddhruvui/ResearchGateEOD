@@ -248,8 +248,14 @@ def main(argv: list[str] | None = None) -> int:
         (out / "_run.json").write_text(json.dumps(manifest, indent=1))
         print(f"wrote {len(bars)} bars for {day} to {out} (as of {now:%H:%M} ET)", file=sys.stderr)
     if args.upload and bars:
+        # The first file goes up alone. 16 threads making their first TLS handshake at
+        # once segfaulted inside OpenSSL's certificate store (X509_STORE_CTX_get_by_subject,
+        # 2026-11-11 and 11-12): the store sorts itself on its first lookup, and the
+        # threads share it. One completed handshake leaves it sorted before the fan-out.
+        first, *rest = bars
+        store.put_json(f"{first}.json", [bars[first]])
         with ThreadPoolExecutor(max_workers=16) as pool:
-            list(pool.map(lambda t: store.put_json(f"{t}.json", [bars[t]]), bars))
+            list(pool.map(lambda t: store.put_json(f"{t}.json", [bars[t]]), rest))
         store.put_json("_run.json", manifest)     # last: its as_of marks a complete upload
         print(f"uploaded {len(bars)} bars to {store.url()}", file=sys.stderr)
         if not mongo:
