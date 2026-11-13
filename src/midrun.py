@@ -7,8 +7,9 @@
 Per ticker:
 
   1. LOAD     data/ohlcv/<T>.json, plus data/midrun/<T>.json appended IN MEMORY when its
-              bar is dated after the vendor's last bar (src/ib_today.py --upload puts it
-              there). Neither file is written; data/ohlcv is only ever read.
+              bar is dated after the vendor's last bar (src/ib_today.py --upload, or the
+              last-price Action's src/yahoo_last_price.py --midrun every 10 minutes, puts
+              it there). Neither file is written; data/ohlcv is only ever read.
   2. MODEL    exactly the official model of the last overnight run: same tuned C/gamma
               (latest/ticker_info.json), same training rows (the window ending at the
               vendor's last bar). The partial bar is never a training label — its
@@ -110,8 +111,15 @@ def _init_worker(local: str | None):
     _SRC = LocalSource(Path(local)) if local else LayeredSource(Env.load())
 
 
-def predict_one(src, ticker: str, cfg: dict, dials: dict | None):
-    """(row, info) for one ticker. Reads only; returns nothing to write."""
+def predict_one(src, ticker: str, cfg: dict, dials: dict | None,
+                holidays: set | None = None):
+    """(row, info) for one ticker. Reads only; returns nothing to write.
+
+    With `holidays` (main always passes them), a midrun bar is used only when it is
+    the session right after the vendor's last bar. One dated later means the vendor
+    file has not caught up (say a 04:00 pre-market bar before the overnight EOD lands):
+    appending it would skip a day in every feature, so it is dropped and the ticker
+    predicts from the vendor's bar, info "midrun_gap" saying so."""
     try:
         midrun = src.try_get_json(f"{MIDRUN_PREFIX}/{ticker}.json")
         midrun = midrun if isinstance(midrun, list) else None
@@ -124,6 +132,12 @@ def predict_one(src, ticker: str, cfg: dict, dials: dict | None):
         j = len(bars) - 1
         mid_dates = {str(r.get("date", ""))[:10] for r in midrun or [] if isinstance(r, dict)}
         appended = bool(bars.attrs.get("appended")) and str(dates[j].date()) in mid_dates
+        gap = None
+        if appended and holidays is not None and j > 0 \
+                and dates[j] != next_session(dates[j - 1], holidays):
+            gap = f"midrun bar {dates[j].date()} is not the session after {dates[j - 1].date()}"
+            bars = bars.iloc[:j].reset_index(drop=True)
+            dates, j, appended = dates[:j], j - 1, False
 
         feats = build_features(bars, cfg)
         X = feats[FEATURES].to_numpy(dtype=float)
@@ -165,13 +179,16 @@ def predict_one(src, ticker: str, cfg: dict, dials: dict | None):
             "C": float(C), "gamma": float(gamma),
             "dials_tuned_at": stamped_at(dials) if tuned else None,
         }
-        return row, {"ticker": ticker, "bar": row["bar"], "tuned": tuned}
+        info = {"ticker": ticker, "bar": row["bar"], "tuned": tuned}
+        if gap:
+            info["midrun_gap"] = gap
+        return row, info
     except Exception:
         return None, {"ticker": ticker, "error": traceback.format_exc(limit=4)}
 
 
-def _one(ticker, cfg, dials):
-    return predict_one(_SRC, ticker, cfg, dials)
+def _one(ticker, cfg, dials, holidays):
+    return predict_one(_SRC, ticker, cfg, dials, holidays)
 
 
 def midrun_key(base: str, rel: str) -> str:
@@ -221,8 +238,10 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"read      : {src.bucket} data/ohlcv + {MIDRUN_PREFIX} (READ-ONLY)", flush=True)
     print(f"write to  : {dst.url(midrun_key(base, ''))}", flush=True)
-    print(f"midrun as of: {ib_run.get('as_of', 'unknown')}", flush=True)
+    print(f"midrun as of: {ib_run.get('as_of', 'unknown')} "
+          f"({ib_run.get('source', 'ib') if ib_run else 'no _run.json'})", flush=True)
 
+    holidays = holiday_set(src)
     t0 = time.time()
     from .run import container_resources
     cpus, total_gb, _ = container_resources()
@@ -230,13 +249,13 @@ def main(argv: list[str] | None = None) -> int:
     rows, infos = [], []
     if workers <= 1:
         for t in tickers:
-            r, i = predict_one(src, t, cfg, dials.get(t))
+            r, i = predict_one(src, t, cfg, dials.get(t), holidays)
             rows += [r] if r else []
             infos.append(i)
     else:
         with ProcessPoolExecutor(max_workers=workers, initializer=_init_worker,
                                  initargs=(args.local,)) as pool:
-            futs = [pool.submit(_one, t, cfg, dials.get(t)) for t in tickers]
+            futs = [pool.submit(_one, t, cfg, dials.get(t), holidays) for t in tickers]
             for f in as_completed(futs):
                 r, i = f.result()
                 rows += [r] if r else []
@@ -245,21 +264,27 @@ def main(argv: list[str] | None = None) -> int:
     errs = [i for i in infos if "error" in i]
     for e in errs[:3]:
         print(f"  !! {e['ticker']}: {e['error'].splitlines()[-1]}", file=sys.stderr)
+    gaps = [i for i in infos if i.get("midrun_gap")]
+    if gaps:
+        print(f"  !! midrun bar dropped for {len(gaps)} (vendor file behind): "
+              f"{gaps[0]['ticker']}: {gaps[0]['midrun_gap']}", file=sys.stderr)
     if not rows:
         print("no predictions", file=sys.stderr)
         return 1
 
     df = pd.DataFrame(rows).sort_values("ticker").reset_index(drop=True)
-    target = next_session(pd.Timestamp(df["as_of"].max()), holiday_set(src))
+    target = next_session(pd.Timestamp(df["as_of"].max()), holidays)
     df["for_session"] = target
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     n_mid = int((df["bar"] == "midrun").sum())
     meta = {
         "mode": "midrun", "stamp": stamp, "midrun_as_of": ib_run.get("as_of"),
+        "midrun_source": ib_run.get("source", "ib") if ib_run else None,
         "for_session": str(target.date()), "predicted": len(df),
         "from_midrun_bar": n_mid, "from_ohlcv_bar": len(df) - n_mid,
         "up": int((df["direction"] == "up").sum()), "down": int((df["direction"] == "down").sum()),
         "untuned": sorted(i["ticker"] for i in infos if i.get("tuned") is False),
+        "midrun_gap": sorted(i["ticker"] for i in infos if i.get("midrun_gap")),
         "errors": len(errs), "seconds": round(time.time() - t0, 1),
     }
 

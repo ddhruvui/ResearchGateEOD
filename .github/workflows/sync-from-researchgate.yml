@@ -1,7 +1,8 @@
 # Every morning at 06:00 US/Eastern: once ResearchGate's 04:30 daily has finished, copy its
 # results into results/ResearchGateEOD and publish them to MongoDB ResearchGateEOD
 # (scripts/sync_from_rg.sh). No pod: ResearchGate already graded and predicted, and this
-# project's own addition is the intraday midrun, run by hand with scripts/midrun.sh.
+# project's own addition is the intraday midrun: midrun-yahoo.yml at 08:05, 12:05, 16:05
+# and 20:05 on weekdays, or by hand with scripts/midrun.sh.
 #
 # Replaces the 04:30 daily-run workflow, which launched an EOD pod at the same minute as
 # ResearchGate's: its copy could catch ResearchGate's previous run or a half-written one, and
@@ -25,9 +26,10 @@ on:
         type: boolean
         default: false
 
-# Never two syncs at once: both would wipe and refill the same prefix.
+# Never two syncs at once: both would wipe and refill the same prefix. Shared with
+# midrun-yahoo.yml, so its midrun waits instead of reading latest/ mid-wipe.
 concurrency:
-  group: sync-from-researchgate
+  group: researchgateeod-results
   cancel-in-progress: false
 
 permissions:

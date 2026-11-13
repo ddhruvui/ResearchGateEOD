@@ -136,3 +136,31 @@ def test_end_to_end_writes_only_under_midrun(tmp_path):
                       "next_session.json").read_text())
     assert [r["ticker"] for r in out] == ["AAL", "AAPL"]
     assert {r["bar"] for r in out} == {"midrun"} and out[0]["C"] == 2.0
+
+
+def _after(rows, days, mult=1.01):
+    """_next_day's bar, moved `days` business days after the vendor's last bar."""
+    bar = _next_day(rows, mult)[0]
+    bar["date"] = str((pd.Timestamp(rows[-1]["date"]) + pd.offsets.BDay(days)).date())
+    return [bar]
+
+
+def test_midrun_bar_after_a_missing_vendor_day_is_dropped():
+    # e.g. a 04:00 pre-market bar for today while the vendor file still ends two sessions back
+    rows = _bars()
+    src = _Src({"data/ohlcv/AAPL.json": rows, "data/midrun/AAPL.json": _after(rows, 2)})
+    r, info = predict_one(src, "AAPL", CFG, None, holidays=set())
+    assert r["bar"] == "ohlcv" and r["as_of"] == pd.Timestamp(rows[-1]["date"])
+    assert "not the session after" in info["midrun_gap"]
+    # the very next session is used as before
+    src = _Src({"data/ohlcv/AAPL.json": rows, "data/midrun/AAPL.json": _after(rows, 1)})
+    r, info = predict_one(src, "AAPL", CFG, None, holidays=set())
+    assert r["bar"] == "midrun" and "midrun_gap" not in info
+
+
+def test_midrun_bar_after_an_exchange_holiday_is_the_next_session():
+    rows = _bars()
+    holiday = (pd.Timestamp(rows[-1]["date"]) + pd.offsets.BDay(1)).normalize()
+    src = _Src({"data/ohlcv/AAPL.json": rows, "data/midrun/AAPL.json": _after(rows, 2)})
+    r, info = predict_one(src, "AAPL", CFG, None, holidays={holiday})
+    assert r["bar"] == "midrun" and "midrun_gap" not in info

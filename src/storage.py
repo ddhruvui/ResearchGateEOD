@@ -19,7 +19,8 @@ Anything extra you want alongside the source data — derived columns, caches,
 diagnostics — goes under the results prefix.
 
 ONE EXCEPTION, by the user's decision (2026-10-27): `MidrunStore` writes the intraday
-IB bars from src/ib_today.py to data/midrun/<TICKER>.json. It can write nothing else —
+bars from src/ib_today.py (IB) and src/yahoo_last_price.py --midrun (Yahoo, the
+last-price Action, since 2026-11-13) to data/midrun/<TICKER>.json. It can write nothing else —
 one flat file name per call, pinned under data/midrun/, no delete — so data/ohlcv/ and
 the rest of data/ stay unreachable.
 """
@@ -28,6 +29,7 @@ from __future__ import annotations
 import io
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor
 from typing import Iterator
 
 import boto3
@@ -217,7 +219,8 @@ _MIDRUN_NAME = re.compile(r"^(?:[A-Z0-9][A-Z0-9.-]{0,14}|_run)\.json$")
 class MidrunStore:
     """WRITE-ONLY view of data/midrun/ on the source volume — the one place this
     project writes under data/ (see the module docstring). Intraday bars from
-    src/ib_today.py land at data/midrun/<TICKER>.json. Overwrites a ticker's own
+    src/ib_today.py and src/yahoo_last_price.py land at data/midrun/<TICKER>.json.
+    Overwrites a ticker's own
     file; never deletes, never reads, never touches any other key."""
 
     def __init__(self, env: Env):
@@ -235,3 +238,18 @@ class MidrunStore:
     def put_json(self, name: str, obj) -> None:
         self._s3.put_object(Bucket=self._bucket, Key=self._full(name),
                             Body=json.dumps(obj).encode(), ContentType="application/json")
+
+    def put_run(self, bars: dict[str, dict], manifest: dict) -> None:
+        """One upload: every <TICKER>.json (a one-bar array), then _run.json last, so its
+        as_of marks a complete upload. Used by src.ib_today and src.yahoo_last_price.
+
+        The first file goes up alone. 16 threads making their first TLS handshake at
+        once segfaulted inside OpenSSL's certificate store (X509_STORE_CTX_get_by_subject,
+        2026-11-11 and 11-12): the store sorts itself on its first lookup, and the
+        threads share it. One completed handshake leaves it sorted before the fan-out."""
+        if bars:
+            first, *rest = bars
+            self.put_json(f"{first}.json", [bars[first]])
+            with ThreadPoolExecutor(max_workers=16) as pool:
+                list(pool.map(lambda t: self.put_json(f"{t}.json", [bars[t]]), rest))
+        self.put_json("_run.json", manifest)

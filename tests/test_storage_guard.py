@@ -207,6 +207,16 @@ def test_midrun_store_rejects_any_other_key(bad):
 
 
 def test_midrun_store_has_no_read_or_delete():
-    allowed = {"put_json", "url"}
+    allowed = {"put_json", "put_run", "url"}
     public = {n for n in dir(MidrunStore) if not n.startswith("_")}
     assert public == allowed
+
+
+def test_midrun_put_run_sends_the_first_bar_alone_and_the_manifest_last():
+    ms = _midrun()
+    bars = {t: {"date": "2026-11-13"} for t in ("AAPL", "BRK-B", "NVDA", "QCOM")}
+    ms.put_run(bars, {"as_of": "x"})
+    puts = list(ms._s3.puts)
+    assert puts[0] == "data/midrun/AAPL.json"
+    assert puts[-1] == "data/midrun/_run.json"
+    assert set(puts) == {f"data/midrun/{t}.json" for t in bars} | {"data/midrun/_run.json"}

@@ -1,6 +1,11 @@
-# Every 10 minutes from Sunday 20:00 to Friday 20:00 New York time: every ticker's latest
-# price (pre-market, regular and after-hours) from Yahoo Finance into MongoDB
-# LastPrice.LastPrice {_id: "latest"} (src/yahoo_last_price.py).
+# Every 10 minutes from Sunday 20:00 to Friday 20:00 New York time, from Yahoo Finance
+# (src/yahoo_last_price.py --midrun):
+#   - every ticker's latest price (pre-market, regular and after-hours) into MongoDB
+#     LastPrice.LastPrice {_id: "latest"}
+#   - once today's session has opened, today's bar so far (open/high/low/volume, latest
+#     trade as close) into s3://crimtr8kbf/data/midrun/<T>.json + _run.json, the files
+#     `python -m src.ib_today --upload` writes. An IB upload from today is left alone for
+#     30 minutes, and for as long as it is newer than Yahoo's newest trade (overnight).
 #
 # Cron is UTC and has no DST, so the schedule is a superset of the window in both offsets:
 #   Sunday 20:00 ET = Monday 00:00 UTC (EDT) / 01:00 UTC (EST)
@@ -10,7 +15,8 @@
 # GitHub may start scheduled runs several minutes late, or skip some when it is busy.
 #
 # SETUP: the repository secret RESEARCHGATEEOD_ENV (the full .env), already used by
-# sync-from-researchgate.yml. Only MONGO_URI / DB_PASSWORD are read from it.
+# sync-from-researchgate.yml. Read from it: MONGO_URI / DB_PASSWORD, and the volume's
+# AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (+ RUNPOD_S3_* if set).
 name: last-price
 
 on:
@@ -20,11 +26,11 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "Print prices only, no Mongo"
+        description: "Print prices and bars only, no Mongo, no data/midrun"
         type: boolean
         default: false
 
-# A late run must not overlap the next: both would write the same document.
+# A late run must not overlap the next: both would write the same document and files.
 concurrency:
   group: last-price
   cancel-in-progress: false
@@ -71,11 +77,11 @@ jobs:
             esac
           done < .env
 
-      # Only what src.publish_mongo imports.
+      # Only what src.publish_mongo and src.storage import.
       - name: install python deps
         if: steps.gate.outputs.run == 'true'
         run: pip install --quiet pandas boto3 PyYAML pymongo certifi
 
-      - name: update LastPrice
+      - name: update LastPrice and data/midrun
         if: steps.gate.outputs.run == 'true'
-        run: python -m src.yahoo_last_price ${{ inputs.dry_run && '--dry-run' || '' }}
+        run: python -m src.yahoo_last_price --midrun ${{ inputs.dry_run && '--dry-run' || '' }}

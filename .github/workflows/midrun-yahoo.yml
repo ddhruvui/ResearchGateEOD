@@ -1,0 +1,109 @@
+# Monday-Friday at 08:05, 12:05, 16:05 and 20:05 New York time: the midrun prediction from
+# Yahoo's bar so far, published to MongoDB ResearchGateEOD (the dashboard's Midrun view):
+#
+#   YAHOO=1 KEEP_IB=1 SKIP_SEED=1 bash scripts/midrun.sh
+#
+#   08:05  pre-market so far (04:00 ET on; Yahoo has prices but no volume before the open)
+#   12:05  regular session so far
+#   16:05  the regular close, plus any after-hours trade
+#   20:05  after-hours close (Yahoo has no overnight session)
+#
+# KEEP_IB=1: an IB upload you made in the last 30 minutes (python3 -m src.ib_today --upload,
+# or bash scripts/midrun.sh) is predicted from instead of being replaced by Yahoo's bars.
+# SKIP_SEED=1: sync-from-researchgate.yml refreshed results/ResearchGateEOD at 06:00, and the
+# two share a concurrency group, so a midrun never reads latest/ while the sync rewrites it.
+# Weekdays with no session (exchange holidays) find no bar for today and stop without
+# predicting. Five minutes past the hour keeps the Yahoo fetch clear of last-price.yml's
+# on-the-hour run, and GitHub's start-of-hour queue.
+#
+# Cron is UTC and has no DST, so each time is scheduled for both offsets and the `gate` step
+# lets through only the line whose offset New York is on today:
+#   EDT (UTC-4): 08/12/16 ET = 12/16/20 UTC, 20 ET = 00 UTC the next day
+#   EST (UTC-5): 08/12/16 ET = 13/17/21 UTC, 20 ET = 01 UTC the next day
+# GitHub may start scheduled runs several minutes late, or skip one when it is busy.
+#
+# SETUP: the repository secret RESEARCHGATEEOD_ENV (the full .env), already used by the other
+# workflows. Read from it: AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (+ RUNPOD_S3_* if set)
+# and MONGO_URI / DB_PASSWORD.
+name: midrun-yahoo
+
+on:
+  schedule:
+    - cron: "5 12,16,20 * * 1-5"   # 08:05 / 12:05 / 16:05 EDT
+    - cron: "5 0 * * 2-6"          # 20:05 EDT (Mon-Fri evening in New York)
+    - cron: "5 13,17,21 * * 1-5"   # 08:05 / 12:05 / 16:05 EST
+    - cron: "5 1 * * 2-6"          # 20:05 EST
+  workflow_dispatch:               # manual run from the Actions tab, any time
+    inputs:
+      dry_run:
+        description: "Fetch and predict, but upload, write and publish nothing"
+        type: boolean
+        default: false
+
+# Shared with sync-from-researchgate.yml, which wipes and refills results/ResearchGateEOD.
+concurrency:
+  group: researchgateeod-results
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  midrun:
+    runs-on: ubuntu-latest
+    # Yahoo ~60 s, predict ~1 min, publish ~30 s.
+    timeout-minutes: 20
+    steps:
+      - name: gate (08:05 / 12:05 / 16:05 / 20:05 New York only)
+        id: gate
+        run: |
+          case "${{ github.event.schedule }}" in
+            "5 12,16,20 * * 1-5"|"5 0 * * 2-6") want="-0400" ;;
+            "5 13,17,21 * * 1-5"|"5 1 * * 2-6") want="-0500" ;;
+            *)            echo "run=true" >> "$GITHUB_OUTPUT"; exit 0 ;;   # workflow_dispatch
+          esac
+          now="$(TZ=America/New_York date +%z)"
+          if [ "$now" = "$want" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "New York is UTC$now today; this is the UTC$want schedule — skipping."
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.gate.outputs.run == 'true'
+
+      - uses: actions/setup-python@v5
+        if: steps.gate.outputs.run == 'true'
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: write .env
+        if: steps.gate.outputs.run == 'true'
+        env:
+          RESEARCHGATEEOD_ENV: ${{ secrets.RESEARCHGATEEOD_ENV }}
+        run: |
+          [ -n "$RESEARCHGATEEOD_ENV" ] || { echo "::error::secret RESEARCHGATEEOD_ENV is not set"; exit 1; }
+          printf '%s\n' "$RESEARCHGATEEOD_ENV" > .env
+          chmod 600 .env
+          while IFS= read -r line || [ -n "$line" ]; do
+            case "$line" in
+              [A-Za-z_]*=?*)
+                v="${line#*=}"; v="${v%\"}"; v="${v#\"}"; v="${v%\'}"; v="${v#\'}"
+                [ "${#v}" -ge 8 ] && echo "::add-mask::$v" ;;
+            esac
+          done < .env
+
+      - name: install python deps
+        if: steps.gate.outputs.run == 'true'
+        run: pip install --quiet -r requirements.txt
+
+      - name: midrun from Yahoo
+        if: steps.gate.outputs.run == 'true'
+        env:
+          YAHOO: "1"
+          KEEP_IB: "1"
+          SKIP_SEED: "1"
+          DRY_RUN: ${{ inputs.dry_run && '1' || '' }}
+        run: bash scripts/midrun.sh
