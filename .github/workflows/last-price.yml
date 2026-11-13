@@ -1,0 +1,81 @@
+# Every 10 minutes from Sunday 20:00 to Friday 20:00 New York time: every ticker's latest
+# price (pre-market, regular and after-hours) from Yahoo Finance into MongoDB
+# LastPrice.LastPrice {_id: "latest"} (src/yahoo_last_price.py).
+#
+# Cron is UTC and has no DST, so the schedule is a superset of the window in both offsets:
+#   Sunday 20:00 ET = Monday 00:00 UTC (EDT) / 01:00 UTC (EST)
+#   Friday 20:00 ET = Saturday 00:00 UTC (EDT) / 01:00 UTC (EST)
+# -> every 10 min Monday-Friday UTC plus Saturday 00:00-01:50 UTC. The `gate` step
+# (scripts/last_price_window.sh) then lets through only runs inside the window in New York.
+# GitHub may start scheduled runs several minutes late, or skip some when it is busy.
+#
+# SETUP: the repository secret RESEARCHGATEEOD_ENV (the full .env), already used by
+# sync-from-researchgate.yml. Only MONGO_URI / DB_PASSWORD are read from it.
+name: last-price
+
+on:
+  schedule:
+    - cron: "*/10 * * * 1-5"     # Monday-Friday UTC
+    - cron: "*/10 0-1 * * 6"     # Saturday 00:00-01:50 UTC = Friday evening in New York
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Print prices only, no Mongo"
+        type: boolean
+        default: false
+
+# A late run must not overlap the next: both would write the same document.
+concurrency:
+  group: last-price
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  last-price:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: gate (Sunday 20:00 - Friday 20:00 New York)
+        id: gate
+        run: |
+          if [ "${{ github.event_name }}" != "schedule" ] || bash scripts/last_price_window.sh; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Outside the window: New York is $(TZ=America/New_York date '+%a %H:%M %Z') — skipping."
+          fi
+
+      - uses: actions/setup-python@v5
+        if: steps.gate.outputs.run == 'true'
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: write .env
+        if: steps.gate.outputs.run == 'true'
+        env:
+          RESEARCHGATEEOD_ENV: ${{ secrets.RESEARCHGATEEOD_ENV }}
+        run: |
+          [ -n "$RESEARCHGATEEOD_ENV" ] || { echo "::error::secret RESEARCHGATEEOD_ENV is not set"; exit 1; }
+          printf '%s\n' "$RESEARCHGATEEOD_ENV" > .env
+          chmod 600 .env
+          while IFS= read -r line || [ -n "$line" ]; do
+            case "$line" in
+              [A-Za-z_]*=?*)
+                v="${line#*=}"; v="${v%\"}"; v="${v#\"}"; v="${v%\'}"; v="${v#\'}"
+                [ "${#v}" -ge 8 ] && echo "::add-mask::$v" ;;
+            esac
+          done < .env
+
+      # Only what src.publish_mongo imports.
+      - name: install python deps
+        if: steps.gate.outputs.run == 'true'
+        run: pip install --quiet pandas boto3 PyYAML pymongo certifi
+
+      - name: update LastPrice
+        if: steps.gate.outputs.run == 'true'
+        run: python -m src.yahoo_last_price ${{ inputs.dry_run && '--dry-run' || '' }}
